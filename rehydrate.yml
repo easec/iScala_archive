@@ -1,0 +1,68 @@
+# This pipeline will:
+# - Provision an Azure VM.
+# 
+# 
+#
+# The following variables need to be provided to the pipeline:
+#
+# - subscriptionId           : Subscription Id.
+# - storage-account          : Name for Storage account.
+# - source-container         : Name for source container.
+# - source-blob-os           : Name for source blob containing OS.
+# - source-blob-data         : Name for source blob containing data.
+# - dest-container           : Name for destination container.
+# - dest-blob-os             : Name for destination blob containing OS.
+# - dest-blob-data           : Name for destination blob containing data.
+# - account-key              : Provided through variables (Azure DevOps) - contains value that should be a secret
+#
+# This pipeline also expects an Azure (Resource Manager) service connection in Azure DevOps with the name 'MyAzureServiceConnection'.
+
+
+trigger: none
+pr: none
+
+pool:
+  name: easec-pool
+  
+variables:
+  subscriptionId: "0ac447d7-fbc3-4d3d-84d4-37bb9a71e089"
+  source-container: "iscala-archive"
+  source-blob-os: "easec-vm_OsDisk_1_snap.vhd"
+  source-blob-data: "easec-vm_DataDisk_1_snap.vhd"
+  dest-container: "snapshot"
+  dest-blob-os: "easec-vm_OsDisk_1_snap.vhd"
+  dest-blob-data: "easec-vm_DataDisk_1_snap.vhd"
+  storage-account: snapshottestsa
+
+stages:
+- stage: Check_container_exist
+  jobs:
+  - job:
+    steps:
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: 'AzureServiceConnection'
+          scriptType: 'bash'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            exist=$(az storage container exists --account-name "$(storage-account)" --sas-token "$(token)" --name "$(dest-container)" --query [exists] -o tsv)
+            echo $exist
+            if [ "$exist" = "true" ]; then
+              echo "Container exist"
+            else
+              echo "Container does´nt exist"
+              az storage container create --name "$(dest-container)" --account-name "$(storage-account)" --sas-token "$(token)"
+            fi
+          
+- stage: re_hydrate
+  jobs:
+  - job:
+    steps:
+     - task: AzureCLI@2
+       inputs:
+         azureSubscription: 'AzureServiceConnection'
+         scriptType: pscore
+         scriptLocation: inlineScript
+         inlineScript: |
+          az storage blob copy start --source-container "$(source-container)" --source-blob "$(source-blob-os)" --destination-container "$(dest-container)" --destination-blob "$(dest-blob-os)" --account-name "$(storage-account)" --sas-token "$(token)" --tier hot --rehydrate-priority standard
+          az storage blob copy start --source-container "$(source-container)" --source-blob "$(source-blob-data)" --destination-container "$(dest-container)" --destination-blob "$(dest-blob-data)" --account-name "$(storage-account)" --sas-token "$(token)" --tier hot --rehydrate-priority standard
