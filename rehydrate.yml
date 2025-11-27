@@ -16,7 +16,7 @@
 #
 # Pipeline are used with User assigned managed identity
 #
-# This pipeline also expects an Azure (Resource Manager) service connection in Azure DevOps with the name 'snapshottest_sa', using Workload Identity federation (manual). This service connection must have been set up in the Project Settings.
+# This pipeline also expects an Azure (Resource Manager) service connection in Azure DevOps with the name 'connection_snapshottestsa', using Workload Identity federation (manual). This service connection must have been set up in the Project Settings.
 
 
 trigger: none
@@ -42,7 +42,7 @@ stages:
     steps:
       - task: AzureCLI@2
         inputs:
-          azureSubscription: 'snapshottest_sa'
+          azureSubscription: 'connection_snapshottestsa'
           scriptType: 'bash'
           scriptLocation: 'inlineScript'
           inlineScript: |
@@ -61,7 +61,7 @@ stages:
     steps:
      - task: AzureCLI@2
        inputs:
-         azureSubscription: 'snapshottest_sa'
+         azureSubscription: 'connection_snapshottestsa'
          scriptType: pscore
          scriptLocation: inlineScript
          inlineScript: |
