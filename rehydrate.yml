@@ -52,7 +52,7 @@ stages:
               echo "Container exist"
             else
               echo "Container does´nt exist"
-              az storage container create --name "$(dest-container)" --account-name "$(storage-account)" --auth-mode login"
+              az storage container create --name "$(dest-container)" --account-name "$(storage-account)" --auth-mode login
             fi
           
 - stage: re_hydrate
