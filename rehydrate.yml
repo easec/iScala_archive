@@ -36,7 +36,7 @@ variables:
   dest-blob-data: "easec-vm_DataDisk_1_snap.vhd"
 
 stages:
-- stage: Check_container_exist
+- stage: check_container_exist
   jobs:
   - job:
     steps:
