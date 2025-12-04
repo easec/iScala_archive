@@ -3,7 +3,7 @@
 # - Rehydrate archived snapshot files, from Archived to Hot.
 # 
 #
-# The variables is provided by Variable group with the name:
+# The variables is provided by Variable group with the name: variable_iScaleArchive
 #
 #
 # Pipeline are used with User assigned managed identity
