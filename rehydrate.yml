@@ -18,14 +18,7 @@ pool:
   name: easec-pool
   
 variables:
-  storage-account: snapshottestsa
-  subscriptionId: "0ac447d7-fbc3-4d3d-84d4-37bb9a71e089"
-  source-container: "iscala-archive"
-  source-blob-os: "easec-vm_OsDisk_1_snap.vhd"
-  source-blob-data: "easec-vm_DataDisk_1_snap.vhd"
-  dest-container: "snapshot"
-  dest-blob-os: "easec-vm_OsDisk_1_snap.vhd"
-  dest-blob-data: "easec-vm_DataDisk_1_snap.vhd"
+- group: variable_iScaleArchive
 
 stages:
 - stage: check_container_exist
