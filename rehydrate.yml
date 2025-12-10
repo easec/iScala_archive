@@ -31,13 +31,13 @@ stages:
           scriptType: 'bash'
           scriptLocation: 'inlineScript'
           inlineScript: |
-            exist=$(az storage container exists --account-name "$(storage-account)" --auth-mode login --name "$(dest-container)" --query [exists] -o tsv)
+            exist=$(az storage container exists --account-name "$(storageAccount)" --auth-mode login --name "$(containerName)" --query [exists] -o tsv)
             echo $exist
             if [ "$exist" = "true" ]; then
               echo "Container exist"
             else
               echo "Container does´nt exist"
-              az storage container create --name "$(dest-container)" --account-name "$(storage-account)" --auth-mode login
+              az storage container create --name "$(containerName)" --account-name "$(storageAccount)" --auth-mode login
             fi
           
 - stage: re_hydrate
@@ -50,5 +50,5 @@ stages:
          scriptType: pscore
          scriptLocation: inlineScript
          inlineScript: |
-          az storage blob copy start --source-container "$(source-container)" --source-blob "$(source-blob-os)" --destination-container "$(dest-container)" --destination-blob "$(dest-blob-os)" --account-name "$(storage-account)" --auth-mode login --tier hot --rehydrate-priority standard
-          az storage blob copy start --source-container "$(source-container)" --source-blob "$(source-blob-data)" --destination-container "$(dest-container)" --destination-blob "$(dest-blob-data)" --account-name "$(storage-account)" --auth-mode login --tier hot --rehydrate-priority standard
+          az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobOs)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobOs)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
+          az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobData)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobData)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
