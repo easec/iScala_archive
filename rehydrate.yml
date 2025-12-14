@@ -64,4 +64,3 @@ stages:
          scriptLocation: inlineScript
          inlineScript: |
           Start-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -TriggerName "$(triggerName)"
- 
