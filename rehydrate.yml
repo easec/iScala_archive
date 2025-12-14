@@ -57,8 +57,9 @@ stages:
   jobs:
   - job:
     steps:
-    - task: PowerShell@2
+    - task: AzurePowerShell@4
       inputs:
-       targetType: 'inline'
-       script: |
+       azureSubscription: 'connection_subscription'
+       scriptType: 'InlineScript'
+       Inline: |
         Start-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -TriggerName "$(triggerName)"
