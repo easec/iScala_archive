@@ -61,4 +61,4 @@ stages:
       inputs:
        targetType: 'inline'
        script: |
-        Start-AzLogicApp -ResourceGroupName $resourceGroup -Name $logicAppName -TriggerName $triggerName
+        Start-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$($logicAppName)" -TriggerName "$(triggerName)"
