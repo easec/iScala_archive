@@ -27,9 +27,9 @@ stages:
     steps:
       - task: AzureCLI@2
         inputs:
-          azureSubscription: 'connection_snapshottestsa'
-          scriptType: 'bash'
-          scriptLocation: 'inlineScript'
+          azureSubscription: "connection_snapshottestsa"
+          scriptType: "bash"
+          scriptLocation: "inlineScript"
           inlineScript: |
             exist=$(az storage container exists --account-name "$(storageAccount)" --auth-mode login --name "$(containerName)" --query [exists] -o tsv)
             echo $exist
@@ -46,9 +46,9 @@ stages:
     steps:
      - task: AzureCLI@2
        inputs:
-         azureSubscription: 'connection_snapshottestsa'
-         scriptType: pscore
-         scriptLocation: inlineScript
+         azureSubscription: "connection_snapshottestsa"
+         scriptType: "pscore"
+         scriptLocation: "inlineScript"
          inlineScript: |
           az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobOs)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobOs)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
           az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobData)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobData)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
