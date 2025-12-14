@@ -59,8 +59,8 @@ stages:
     steps:
     - task: AzurePowerShell@5
       inputs:
-       azureSubscription: 'connection_subscription'
-       azurePowerShellVersion: 'LatestVersion'
-       scriptType: 'InlineScript'
+       azureSubscription: "connection_subscription"
+       azurePowerShellVersion: "LatestVersion"
+       scriptType: "InlineScript"
        Inline: |
         Start-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -TriggerName "$(triggerName)"
