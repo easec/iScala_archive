@@ -60,7 +60,7 @@ stages:
      - task: PowerShell@2
        inputs:
          azureSubscription: 'connection_subscription'
-         scriptType: pscore
+         scriptType: powershell
          scriptLocation: inlineScript
          inlineScript: |
           Install-Module -Name Az -AllowClobber -Force
