@@ -57,12 +57,12 @@ stages:
   jobs:
   - job:
     steps:
-     - task: PowerShell@2
+     - task: AzurePowerShell@5
        inputs:
          azureSubscription: 'connection_subscription'
-         scriptType: powershell
-         scriptLocation: inlineScript
-         inlineScript: |
+         azurePowerShellVersion: 'LatestVersion'
+         scriptType: 'InlineScript'
+         inline:
           Install-Module -Name Az -AllowClobber -Force
           Install-Module -Name Az.Accounts -AllowClobber -Force
           Uninstall-AzureRM
