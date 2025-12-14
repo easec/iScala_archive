@@ -57,7 +57,7 @@ stages:
   jobs:
   - job:
     steps:
-     - task: AzureCLI@2
+     - task: PowerShell@2
        inputs:
          azureSubscription: 'connection_subscription'
          scriptType: pscore
