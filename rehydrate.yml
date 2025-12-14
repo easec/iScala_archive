@@ -66,4 +66,4 @@ stages:
           # Install-Module -Name Az -AllowClobber -Force
           # Install-Module -Name Az.Accounts -AllowClobber -Force
           # Uninstall-AzureRM
-          Start-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -TriggerName "$(triggerName)"
+          Start-AzLogicApp --ResourceGroupName "$(resourceGroupResources)" --Name "$(logicAppName)" --TriggerName "$(triggerName)"
