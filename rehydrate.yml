@@ -63,7 +63,4 @@ stages:
        azurePowerShellVersion: 'LatestVersion'
        scriptType: 'InlineScript'
        Inline: |
-        # Install-Module -Name Az -AllowClobber -Force
-        # Install-Module -Name Az.Accounts -AllowClobber -Force
-        # Uninstall-AzureRM
         Start-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -TriggerName "$(triggerName)"
