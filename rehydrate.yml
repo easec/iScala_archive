@@ -4,7 +4,7 @@
 # - Enable and start Logic App.
 # 
 #
-# The variables is provided by Variable group with the name: variable_iScaleArchive
+# The variables are provided by Variable group with the name: variable_iScaleArchive
 #
 #
 # Pipeline are used with User assigned managed identity
