@@ -1,6 +1,7 @@
 # This pipeline will:
 # - Check if container already exists, if not it will create it.
 # - Rehydrate archived snapshot files, from Archived to Hot.
+# - Enable and start Logic App.
 # 
 #
 # The variables is provided by Variable group with the name: variable_iScaleArchive
@@ -8,7 +9,7 @@
 #
 # Pipeline are used with User assigned managed identity
 #
-# This pipeline also expects an Azure (Resource Manager) service connection in Azure DevOps with the name 'connection_snapshottestsa', using Workload Identity federation (manual). This service connection must have been set up in the Project Settings.
+# This pipeline also expects Azure (Resource Manager) service connections in Azure DevOps with the name 'connection_snapshottestsa' and 'connection_subscription' , using Workload Identity federation (manual). This service connections must have been set up in the Project Settings.
 
 
 trigger: none
