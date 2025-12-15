@@ -63,4 +63,5 @@ stages:
        azurePowerShellVersion: "LatestVersion"
        scriptType: "InlineScript"
        Inline: |
+        Set-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -State "Disabled" -Force
         Start-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -TriggerName "$(triggerName)"
