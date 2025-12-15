@@ -40,19 +40,6 @@ stages:
               echo "Container does´nt exist"
               az storage container create --name "$(containerName)" --account-name "$(storageAccount)" --auth-mode login
             fi
-          
-- stage: re_hydrate
-  jobs:
-  - job:
-    steps:
-     - task: AzureCLI@2
-       inputs:
-         azureSubscription: "connection_snapshottestsa"
-         scriptType: "pscore"
-         scriptLocation: "inlineScript"
-         inlineScript: |
-          az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobOs)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobOs)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
-          az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobData)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobData)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
 
 - stage: start_logic_app
   jobs:
@@ -66,3 +53,16 @@ stages:
        Inline: |
         Set-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -State "Enabled" -Force
         Start-AzLogicApp -ResourceGroupName "$(resourceGroupResources)" -Name "$(logicAppName)" -TriggerName "$(triggerName)"
+        
+- stage: re_hydrate
+  jobs:
+  - job:
+    steps:
+     - task: AzureCLI@2
+       inputs:
+         azureSubscription: "connection_snapshottestsa"
+         scriptType: "pscore"
+         scriptLocation: "inlineScript"
+         inlineScript: |
+          az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobOs)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobOs)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
+          az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobData)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobData)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
