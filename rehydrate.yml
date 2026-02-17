@@ -58,11 +58,36 @@ stages:
   jobs:
   - job:
     steps:
-     - task: AzureCLI@2
-       inputs:
-         azureSubscription: "connection_snapshottestsa"
-         scriptType: "pscore"
-         scriptLocation: "inlineScript"
-         inlineScript: |
-          az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobOs)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobOs)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
-          az storage blob copy start --source-container "$(sourceContainer)" --source-blob "$(sourceBlobData)" --destination-container "$(containerName)" --destination-blob "$(destinationBlobData)" --account-name "$(storageAccount)" --auth-mode login --tier hot --rehydrate-priority standard
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: "Azure-Service-Connection-Sub"
+        scriptType: "pscore"
+        scriptLocation: "inlineScript"
+        inlineScript: |
+          $ErrorActionPreference = "Stop"
+
+          $account      = "$(storageAccount)"
+          $srcContainer = "$(sourceContainer)"   # WORM container
+          $dstContainer = "$(containerName)"     # working container (not WORM)
+
+          Write-Host "Listing blobs in source container: $srcContainer"
+          $blobs = az storage blob list `
+            --account-name $account `
+            --container-name $srcContainer `
+            --auth-mode login `
+            --query "[].name" -o tsv
+
+          if (-not $blobs) { throw "No blobs found in source container '$srcContainer'." }
+
+          foreach ($blob in $blobs) {
+            Write-Host "----"
+            Write-Host "Blob: $blob"
+
+            $tier = az storage blob show `
+              --account-name $account `
+              --container-name $srcContainer `
+              --name $blob `
+              --auth-mode login `
+              --query "properties.blobTier" -o tsv
+
+            Write-Host "Source tier: $tier"
