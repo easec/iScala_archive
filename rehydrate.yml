@@ -28,7 +28,7 @@ stages:
     steps:
       - task: AzureCLI@2
         inputs:
-          azureSubscription: "connection_snapshottestsa"
+          azureSubscription: "Azure-Service-Connection-Sub"
           scriptType: "bash"
           scriptLocation: "inlineScript"
           inlineScript: |
