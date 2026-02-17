@@ -91,3 +91,4 @@ stages:
               --query "properties.blobTier" -o tsv
 
             Write-Host "Source tier: $tier"
+            }
