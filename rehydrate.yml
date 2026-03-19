@@ -38,7 +38,7 @@ stages:
               echo "Resource group exist"
             else
               echo "Resource group does´nt exist"
-              az group create --location swedencentral --name rg-iscala-archive-prod
+              az group create --location "$(rgLocation)" --name rg-iscala-archive-prod
             fi
 
 - stage: check_container_exist
