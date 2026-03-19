@@ -22,6 +22,25 @@ variables:
 - group: variable_iScalaArchive
 
 stages:
+- stage: check_resource_group_exist
+  jobs:
+  - job:
+    steps:
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: "Azure-Service-Connection-Sub"
+          scriptType: "bash"
+          scriptLocation: "inlineScript"
+          inlineScript: |
+            exist=$(az group exists --name rg-iscala-archive-prod)" --query [exists] -o tsv)
+            echo $exist
+            if [ "$exist" = "true" ]; then
+              echo "Resource group exist"
+            else
+              echo "Resource group does´nt exist"
+              az group create --locatio "$(location) --name rg-iscala-archive-prod
+            fi
+
 - stage: check_container_exist
   jobs:
   - job:
