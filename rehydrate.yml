@@ -44,6 +44,7 @@ stages:
                 az group create --name "$rgNameProd" --location "$rgLocationProd" --output table
             fi
 
+
 - stage: check_storage_account_exist
   jobs:
   - job:
@@ -58,64 +59,20 @@ stages:
 
             rgNameProd="rg-iscala-archive-prod"
             rgLocationProd="swedencentral"
-            storageAccountNameProd="stiscalasnapshotprod"
-
-            if [ "$(az group exists --name "$rgNameProd")" = "true" ]; then
-                echo "Resource group '$rgNameProd' already exists."
-            else
-                echo "Creating resource group '$rgNameProd' in '$rgLocationProd'..."
-                az group create --name "$rgNameProd" --location "$rgLocationProd" --output table
-            fi
+            storageAccountProd="stiscalasnapshotprod"
 
             if az storage account show \
-              --name $storageAccountNameProd \
+              --name $storageAccountProd \
               --resource-group $rgNameProd \
               --query "name" -o tsv 2>/dev/null; then
               
-              echo "Storage account already exists: $storageAccountNameProd"
+              echo "Storage account already exists: $storageAccountProd"
 
             else
 
               echo "Storage account not found. Creating..."
               az storage account create \
-                --name $storageAccountNameProd \
-                --resource-group $rgNameProd \
-                --location $rgLocationProd \
-                --sku Standard_LRS \
-                --kind StorageV2
-
-              echo "Storage account created."
-
-            fi
-
-- stage: create_storage_account
-  jobs:
-  - job:
-    steps:
-      - task: AzureCLI@2
-        inputs:
-          azureSubscription: "Azure-Service-Connection-Sub"
-          scriptType: "bash"
-          scriptLocation: "inlineScript"
-          inlineScript: |
-            set -e
-
-            rgNameProd="rg-iscala-archive-prod"
-            rgLocationProd="swedencentral"
-            storageAccountNameProd="stiscalasnapshotprod"
-
-            if az storage account show \
-              --name $storageAccountNameProd \
-              --resource-group $rgNameProd \
-              --query "name" -o tsv 2>/dev/null; then
-              
-              echo "Storage account already exists: $storageAccountNameProd"
-
-            else
-
-              echo "Storage account not found. Creating..."
-              az storage account create \
-                --name $storageAccountNameProd \
+                --name $storageAccountProd \
                 --resource-group $rgNameProd \
                 --location $rgLocationProd \
                 --sku Standard_LRS \
