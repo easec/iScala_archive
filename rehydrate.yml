@@ -92,6 +92,7 @@ stages:
           scriptType: "bash"
           scriptLocation: "inlineScript"
           inlineScript: |
+            set -e
             rgNameProd="rg-iscala-archive-prod"
             rgLocationProd="swedencentral"
             storageAccountProd="stiscalasnapshotprod"
