@@ -92,6 +92,10 @@ stages:
           scriptType: "bash"
           scriptLocation: "inlineScript"
           inlineScript: |
+            rgNameProd="rg-iscala-archive-prod"
+            rgLocationProd="swedencentral"
+            storageAccountProd="stiscalasnapshotprod"
+            
             exist=$(az storage container exists --account-name "$(storageAccountProd)" --auth-mode login --name "$(containerName)" --query [exists] -o tsv)
             echo $exist
             if [ "$exist" = "true" ]; then
