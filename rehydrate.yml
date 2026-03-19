@@ -34,14 +34,14 @@ stages:
           inlineScript: |
             set -e
 
-            RG_NAME="rg-iscala-archive-prod"
-            LOCATION="swedencentral"
+            rgNameProd="rg-iscala-archive-prod"
+            rgLocationProd="swedencentral"
 
-            if [ "$(az group exists --name "$RG_NAME")" = "true" ]; then
-                echo "Resource group '$RG_NAME' already exists."
+            if [ "$(az group exists --name "$rgNameProd")" = "true" ]; then
+                echo "Resource group '$rgNameProd' already exists."
             else
-                echo "Creating resource group '$RG_NAME' in '$LOCATION'..."
-                az group create --name "$RG_NAME" --location "$LOCATION" --output table
+                echo "Creating resource group '$rgNameProd' in '$rgLocationProd'..."
+                az group create --name "$rgNameProd" --location "$rgLocationProd" --output table
             fi
 
 - stage: check_container_exist
