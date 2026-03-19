@@ -9,7 +9,7 @@
 #
 # Pipeline are used with User assigned managed identity
 #
-# This pipeline also expects Azure (Resource Manager) service connections in Azure DevOps with the name 'connection_snapshottestsa' and 'connection_subscription' , using Workload Identity federation (manual). This service connections must have been set up in the Project Settings.
+# This pipeline also expects Azure (Resource Manager) service connections in Azure DevOps with the name 'Azure-Service-Connection-Sub'. This service connections must have been set up in the Project Settings.
 
 
 trigger: none
