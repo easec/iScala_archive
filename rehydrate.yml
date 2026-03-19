@@ -32,7 +32,7 @@ stages:
           scriptType: "bash"
           scriptLocation: "inlineScript"
           inlineScript: |
-            exist=$(az group exists --name rg-iscala-archive-prod) --query [exists] -o tsv)
+            exist=$(az group exists --name rg-iscala-archive-prod --query [exists] -o tsv)
             echo $exist
             if [ "$exist" = "true" ]; then
               echo "Resource group exist"
