@@ -97,13 +97,13 @@ stages:
             rgLocationProd="swedencentral"
             storageAccountProd="stiscalasnapshotprod"
             
-            exist=$(az storage container exists --account-name "$(storageAccountProd)" --auth-mode login --name "$(containerName)" --query [exists] -o tsv)
+            exist=$(az storage container exists --account-name "$storageAccountProd" --auth-mode login --name "$containerName" --query [exists] -o tsv)
             echo $exist
             if [ "$exist" = "true" ]; then
               echo "Container exist"
             else
               echo "Container does´nt exist"
-              az storage container create --name "$(containerName)" --account-name "$(storageAccountProd)" --auth-mode login
+              az storage container create --name "$containerName" --account-name "$storageAccountProd" --auth-mode login
             fi
 
 - stage: start_logic_app
