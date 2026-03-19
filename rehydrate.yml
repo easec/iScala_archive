@@ -32,13 +32,16 @@ stages:
           scriptType: "bash"
           scriptLocation: "inlineScript"
           inlineScript: |
-            exist=$(az group exists --name rg-iscala-archive-prod --query [exists] -o tsv)
-            echo $exist
-            if [ "$exist" = "true" ]; then
-              echo "Resource group exist"
+            set -e
+
+            RG_NAME="rg-iscala-archive-prod"
+            LOCATION="swedencentral"
+
+            if [ "$(az group exists --name "$RG_NAME")" = "true" ]; then
+                echo "Resource group '$RG_NAME' already exists."
             else
-              echo "Resource group does´nt exist"
-              az group create --location "$(rgLocation)" --name rg-iscala-archive-prod
+                echo "Creating resource group '$RG_NAME' in '$LOCATION'..."
+                az group create --name "$RG_NAME" --location "$LOCATION" --output table
             fi
 
 - stage: check_container_exist
