@@ -33,6 +33,8 @@ variables:
     value: swedencentral
   - name: containerName
     value: snapshot
+  - name: keyVaultName
+    value: kv-iscala-archive-prod
 
 
 - name: deploymentPrincipalObjectId
@@ -140,6 +142,7 @@ stages:
                   LOCATION="$(rgLocation)"
                   STORAGE_ACCOUNT="$(storageAccount)"
                   CONTAINER_NAME="$(containerName)"
+                  KEYVAULT="$(keyVaultName)"
 
                   echo "Checking resource group: $RESOURCE_GROUP"
                   if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
@@ -149,6 +152,7 @@ stages:
                     echo "Resource group: $RESOURCE_GROUP does´nt exist"
 
                   fi
-
+                  echo "Purge Key Vault: $KEYVAULT"
+                  az keyvault purge --name "$KEYVAULT" --location "$LOCATION"
 
                   echo "Environment for iScala archive deleted."
