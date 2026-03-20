@@ -151,4 +151,4 @@ stages:
                   fi
 
 
-                  echo "Resource Group deleted."
+                  echo "Environment for iScala archive deleted."
