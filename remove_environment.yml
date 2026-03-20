@@ -153,6 +153,6 @@ stages:
 
                   fi
                   echo "Purge Key Vault: $KEYVAULT"
-                  az keyvault purge --name "$KEYVAULT" --location "$LOCATION"
+                  az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
 
                   echo "Environment for iScala archive deleted."
