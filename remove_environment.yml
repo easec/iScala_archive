@@ -61,7 +61,7 @@ stages:
       - checkout: self
 
 
-  - ${{ if eq(parameters.targetEnv, 'prod') }}:
+  - ${{ if eq(parameters.targetEnv, 'dev') }}:
     - deployment: DeployProd
       displayName: Deploy PROD (requires approval)
       environment: iscala-archive-prod
