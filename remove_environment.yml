@@ -83,7 +83,7 @@ stages:
 
             fi
             
-            echo "Checking if Key Vault: $KEYVAULT exists in deleted list."
+            echo "Checking if Key Vault $KEYVAULT exists in deleted list."
 
             if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
               echo "Purging Key Vault: $KEYVAULT"
@@ -131,7 +131,7 @@ stages:
 
                   fi
                   
-                  echo "Checking if Key Vault: $KEYVAULT exists in deleted list."
+                  echo "Checking if Key Vault $KEYVAULT exists in deleted list."
 
                   if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
                     echo "Purging Key Vault: $KEYVAULT"
