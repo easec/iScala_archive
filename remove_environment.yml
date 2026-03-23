@@ -60,8 +60,6 @@ stages:
       steps:
       - checkout: self
 
-
-
       - task: AzureCLI@2
         displayName: Remove environment
         inputs:
@@ -89,6 +87,13 @@ stages:
 
             echo "Environment for iScala archive deleted."
 
+  - ${{ if eq(parameters.targetEnv, 'prod') }}:
+    - job: DeployProd
+      displayName: Deploy Prod
+      pool:
+        name: easec-pool
+      steps:
+      - checkout: self
       - task: AzureCLI@2
         displayName: Remove environment
         inputs:
