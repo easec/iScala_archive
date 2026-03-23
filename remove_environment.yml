@@ -124,9 +124,9 @@ stages:
                   echo "Checking resource group: $RESOURCE_GROUP"
                   if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
                     az group delete --name "$RESOURCE_GROUP"
-                    echo "Resource group: $RESOURCE_GROUP deleted"
+                    echo "Resource group: $RESOURCE_GROUP deleted."
                   else
-                    echo "Resource group: $RESOURCE_GROUP does´nt exist"
+                    echo "Resource group: $RESOURCE_GROUP does´nt exist."
 
                   fi
                   
