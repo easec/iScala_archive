@@ -90,8 +90,7 @@ stages:
               az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
               echo "Key Vault: $KEYVAULT purge started"
             else
-              echo "ERROR: Key Vault $KEYVAULT was not found in deleted vault list"
-              exit 1
+              echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge"
             fi
 
             echo "Environment for iScala archive deleted."
