@@ -88,41 +88,40 @@ stages:
             echo "Environment for iScala archive deleted."
 
 
-    - ${{ if eq(parameters.targetEnv, 'prod') }}:
-        - deployment: DeployProd
-          displayName: Deploy PROD (requires approval)
-          environment: iscala-archive-prod
-          pool:
-            name: easec-pool
-          strategy:
-            runOnce:
-              deploy:
-                steps:
-                - checkout: self'¨
+  - ${{ if eq(parameters.targetEnv, 'prod') }}:
+    - deployment: DeployProd
+      displayName: Deploy PROD (requires approval)
+      environment: iscala-archive-prod
+      pool:
+        name: easec-pool
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
 
-                - task: AzureCLI@2
-                  displayName: Remove environment
-                  inputs:
-                    azureSubscription: ${{ parameters.azureServiceConnection }}
-                    scriptType: bash
-                    scriptLocation: inlineScript
-                    inlineScript: |
-                      set -e
-                      RESOURCE_GROUP="$(resourceGroupName)"
-                      LOCATION="$(rgLocation)"
-                      STORAGE_ACCOUNT="$(storageAccount)"
-                      CONTAINER_NAME="$(containerName)"
-                      KEYVAULT="$(keyVaultName)"
+            - task: AzureCLI@2
+              displayName: Remove environment
+              inputs:
+                azureSubscription: ${{ parameters.azureServiceConnection }}
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  set -e
+                  RESOURCE_GROUP="$(resourceGroupName)"
+                  LOCATION="$(rgLocation)"
+                  STORAGE_ACCOUNT="$(storageAccount)"
+                  CONTAINER_NAME="$(containerName)"
 
-                      echo "Checking resource group: $RESOURCE_GROUP"
-                      if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
-                        az group delete --name "$RESOURCE_GROUP" --yes
-                        echo "Resource group: $RESOURCE_GROUP deleted"
-                      else
-                        echo "Resource group: $RESOURCE_GROUP does´nt exist"
+                  echo "Checking resource group: $RESOURCE_GROUP"
+                  if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
+                    az group delete --name "$RESOURCE_GROUP"
+                    echo "Resource group: $RESOURCE_GROUP deleted"
+                  else
+                    echo "Resource group: $RESOURCE_GROUP does´nt exist"
 
-                      fi
-                      echo "Purge Key Vault: $KEYVAULT"
-                      az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
+                  fi
+                  echo "Purge Key Vault: $KEYVAULT"
+                  az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
 
-                      echo "Environment for iScala archive deleted."
+                  echo "Resource Group deleted."
