@@ -77,20 +77,20 @@ stages:
             echo "Checking resource group: $RESOURCE_GROUP"
             if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
               az group delete --name "$RESOURCE_GROUP" --yes
-              echo "Resource group: $RESOURCE_GROUP deleted"
+              echo "Resource group: $RESOURCE_GROUP deleted."
             else
-              echo "Resource group: $RESOURCE_GROUP does´nt exist"
+              echo "Resource group: $RESOURCE_GROUP does´nt exist."
 
             fi
             
-            echo "Checking if Key Vault exists in deleted list: $KEYVAULT"
+            echo "Checking if Key Vault exists in deleted list: $KEYVAULT."
 
             if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
               echo "Purging Key Vault: $KEYVAULT"
               az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
-              echo "Key Vault: $KEYVAULT purge started"
+              echo "Key Vault: $KEYVAULT purge started."
             else
-              echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge"
+              echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
             fi
 
             echo "Environment for iScala archive deleted."
@@ -129,7 +129,16 @@ stages:
                     echo "Resource group: $RESOURCE_GROUP does´nt exist"
 
                   fi
-                  echo "Purge Key Vault: $KEYVAULT"
-                  az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
+                  
+                  echo "Checking if Key Vault exists in deleted list: $KEYVAULT."
 
-                  echo "Resource Group deleted."
+                  if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
+                    echo "Purging Key Vault: $KEYVAULT"
+                    az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
+                    echo "Key Vault: $KEYVAULT purge started."
+                  else
+                    echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
+                  fi
+
+                  echo "Environment for iScala archive deleted."
+
