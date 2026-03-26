@@ -1,90 +1,188 @@
-# This pipeline will:
-# - Check if container already exists, if not it will create it.
-# - Rehydrate archived snapshot files, from Archived to Hot.
+trigger:
+- main
 
-# 
-#
-# The variables are provided by Variable group with the name: variable_iScaleArchive
-#
-#
-# Pipeline are used with User assigned managed identity
-#
-# This pipeline also expects Azure (Resource Manager) service connections in Azure DevOps with the name 'Azure-Service-Connection-Sub'. This service connections must have been set up in the Project Settings.
+parameters:
+- name: targetEnv
+  type: string
+  default: dev
+  values:
+  - dev
+  - prod
 
-
-trigger: none
-pr: none
-
-pool:
-  name: easec-pool
+- name: azureServiceConnection
+  type: string
+  default: Azure-Service-Connection-Sub
 
 variables:
-  rgNameProd: "rg-iscala-archive-prod"
-  rgLocationProd: "swedencentral"
-  storageAccountProd: "stiscalasnapshotprod"
-  containerName: "snapshot"
+# DEV
+- ${{ if eq(parameters.targetEnv, 'dev') }}:
+  - group: variable_iScalaArchive
+  - name: resourceGroupName
+    value: rg-iscala-archive-dev
+  - name: storageAccount
+    value: stiscalasnapshotdev
+  - name: rgLocation
+    value: swedencentral
 
-steps:
-- task: AzureCLI@2
-  displayName: Ensure resource group, storage account, and container exist
-  inputs:
-    azureSubscription: 'Azure-Service-Connection-Sub'
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      set -e
+# PROD
+- ${{ if eq(parameters.targetEnv, 'prod') }}:
+  - group: variable_iScalaArchive-prod
+  - name: resourceGroupName
+    value: rg-iscala-archive-prod
+  - name: rgLocation
+    value: swedencentral
+  - name: containerName
+    value: snapshot
 
-      RESOURCE_GROUP="$(rgNameProd)"
-      LOCATION="$(rgLocationProd)"
-      STORAGE_ACCOUNT="$(storageAccountProd)"
-      CONTAINER_NAME="$(containerName)"
 
-      echo "Checking resource group: $RESOURCE_GROUP"
-      if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
-        echo "Resource group already exists: $RESOURCE_GROUP"
-      else
-        echo "Creating resource group: $RESOURCE_GROUP"
-        az group create \
-          --name "$RESOURCE_GROUP" \
-          --location "$LOCATION" \
-          --output none
-      fi
+- name: deploymentPrincipalObjectId
+  value: 94f97b9f-b688-4f99-a3ff-64e0e8a945d8
 
-      echo "Checking storage account: $STORAGE_ACCOUNT"
-      if az storage account show \
-        --name "$STORAGE_ACCOUNT" \
-        --resource-group "$RESOURCE_GROUP" \
-        --query "name" \
-        --output tsv >/dev/null 2>&1; then
-        echo "Storage account already exists: $STORAGE_ACCOUNT"
-      else
-        echo "Creating storage account: $STORAGE_ACCOUNT"
-        az storage account create \
-          --name "$STORAGE_ACCOUNT" \
-          --resource-group "$RESOURCE_GROUP" \
-          --location "$LOCATION" \
-          --sku Standard_LRS \
-          --kind StorageV2 \
-          --output none
-      fi
+- name: storageAccountResourceId
+  value: /subscriptions/$(subscriptionId)/resourceGroups/$(resourceGroupName)/providers/Microsoft.Storage/storageAccounts/$(storageAccount)
 
-      echo "Checking blob container: $CONTAINER_NAME"
-      CONTAINER_EXISTS=$(az storage container exists \
-        --account-name "$STORAGE_ACCOUNT" \
-        --auth-mode login \
-        --name "$CONTAINER_NAME" \
-        --query "exists" \
-        --output tsv)
+stages:
+- stage: Deploy
+  displayName: Deploy ${{ parameters.targetEnv }}
+  jobs:
 
-      if [ "$CONTAINER_EXISTS" = "true" ]; then
-        echo "Container already exists: $CONTAINER_NAME"
-      else
-        echo "Creating blob container: $CONTAINER_NAME"
-        az storage container create \
-          --account-name "$STORAGE_ACCOUNT" \
-          --auth-mode login \
-          --name "$CONTAINER_NAME" \
-          --output none
-      fi
+  - ${{ if eq(parameters.targetEnv, 'dev') }}:
+    - job: DeployDev
+      displayName: Deploy DEV
+      pool:
+        name: easec-pool
+      steps:
+      - checkout: self
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: "connection_snapshottestsa"
+          scriptType: "pscore"
+          scriptLocation: "inlineScript"
+          inlineScript: |
+            $ErrorActionPreference = "Stop"
 
-      echo "All resources are ready."
+            $account      = "$(storageAccount)"
+            $srcContainer = "$(sourceContainer)"   # WORM container (immutable)
+            $dstContainer = "$(containerName)"     # Working container (NOT WORM)
+
+            Write-Host "Listing blobs in source (WORM) container: $srcContainer"
+            $blobs = az storage blob list `
+              --account-name $account `
+              --container-name $srcContainer `
+              --auth-mode login `
+              --query "[].name" -o tsv
+
+            if (-not $blobs) { throw "No blobs found in source container '$srcContainer'." }
+
+            foreach ($blob in $blobs) {
+              Write-Host "----"
+              Write-Host "Blob: $blob"
+
+              $tier = az storage blob show `
+                --account-name $account `
+                --container-name $srcContainer `
+                --name $blob `
+                --auth-mode login `
+                --query "properties.blobTier" -o tsv
+
+              Write-Host "Source tier: $tier"
+
+              if ($tier -eq "Archive") {
+                Write-Host "Archive -> starting copy that rehydrates to Hot (Standard)."
+                az storage blob copy start `
+                  --account-name $account `
+                  --auth-mode login `
+                  --source-container $srcContainer `
+                  --source-blob $blob `
+                  --destination-container $dstContainer `
+                  --destination-blob $blob `
+                  --tier hot `
+                  --rehydrate-priority standard | Out-Null
+              }
+              else {
+                Write-Host "Not Archive -> starting normal copy (destination tier Hot)."
+                az storage blob copy start `
+                  --account-name $account `
+                  --auth-mode login `
+                  --source-container $srcContainer `
+                  --source-blob $blob `
+                  --destination-container $dstContainer `
+                  --destination-blob $blob `
+                  --tier hot | Out-Null
+              }
+            }
+
+            Write-Host "All copy operations started."
+      
+  - ${{ if eq(parameters.targetEnv, 'prod') }}:
+    - deployment: DeployProd
+      displayName: Deploy PROD (requires approval)
+      environment: iscala-archive-prod
+      pool:
+        name: easec-pool
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+
+            - task: AzureCLI@2
+              inputs:
+                azureSubscription: "connection_snapshottestsa"
+                scriptType: "pscore"
+                scriptLocation: "inlineScript"
+                inlineScript: |
+                  $ErrorActionPreference = "Stop"
+
+                  $account      = "$(storageAccount)"
+                  $srcContainer = "$(sourceContainer)"   # WORM container (immutable)
+                  $dstContainer = "$(containerName)"     # Working container (NOT WORM)
+
+                  Write-Host "Listing blobs in source (WORM) container: $srcContainer"
+                  $blobs = az storage blob list `
+                    --account-name $account `
+                    --container-name $srcContainer `
+                    --auth-mode login `
+                    --query "[].name" -o tsv
+
+                  if (-not $blobs) { throw "No blobs found in source container '$srcContainer'." }
+
+                  foreach ($blob in $blobs) {
+                    Write-Host "----"
+                    Write-Host "Blob: $blob"
+
+                    $tier = az storage blob show `
+                      --account-name $account `
+                      --container-name $srcContainer `
+                      --name $blob `
+                      --auth-mode login `
+                      --query "properties.blobTier" -o tsv
+
+                    Write-Host "Source tier: $tier"
+
+                    if ($tier -eq "Archive") {
+                      Write-Host "Archive -> starting copy that rehydrates to Hot (Standard)."
+                      az storage blob copy start `
+                        --account-name $account `
+                        --auth-mode login `
+                        --source-container $srcContainer `
+                        --source-blob $blob `
+                        --destination-container $dstContainer `
+                        --destination-blob $blob `
+                        --tier hot `
+                        --rehydrate-priority standard | Out-Null
+                    }
+                    else {
+                      Write-Host "Not Archive -> starting normal copy (destination tier Hot)."
+                      az storage blob copy start `
+                        --account-name $account `
+                        --auth-mode login `
+                        --source-container $srcContainer `
+                        --source-blob $blob `
+                        --destination-container $dstContainer `
+                        --destination-blob $blob `
+                        --tier hot | Out-Null
+                    }
+                  }
+
+                  Write-Host "All copy operations started."
