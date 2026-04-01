@@ -104,7 +104,7 @@ stages:
               echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
             fi
 
-            echo "Checking blob container for snapshots (Hot): $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT"         
+            echo "Checking blob container for snapshots (Hot): $SOURCE_CONTAINER_NAME" "in Storage account: $SOURCE_STORAGE_ACCOUNT"         
             CONTAINER_EXISTS=$(az storage container exists \
               --account-name "$SOURCE_STORAGE_ACCOUNT" \
               --auth-mode login \
