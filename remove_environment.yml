@@ -104,7 +104,7 @@ stages:
               echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
             fi
 
-            echo "Checking blob container for snapshots (Hot): $SOURCE_CONTAINER_NAME" "in Storage account: $SOURCE_STORAGE_ACCOUNT"         
+            echo "Checking blob container for snapshots (Hot): $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT"         
             CONTAINER_EXISTS=$(az storage container exists \
               --account-name "$SOURCE_STORAGE_ACCOUNT" \
               --auth-mode login \
@@ -169,6 +169,25 @@ stages:
                     echo "Key Vault: $KEYVAULT purge started."
                   else
                     echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
+                  fi
+
+                  echo "Checking blob container for snapshots (Hot): $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT"         
+                  CONTAINER_EXISTS=$(az storage container exists \
+                    --account-name "$SOURCE_STORAGE_ACCOUNT" \
+                    --auth-mode login \
+                    --name "$SOURCE_CONTAINER_NAME" \
+                    --query "exists" \
+                    --output tsv)
+
+                  if [ "$CONTAINER_EXISTS" = "true" ]; then
+                    echo "Container: $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT exists"
+                    az storage container delete \
+                      --account-name "$SOURCE_STORAGE_ACCOUNT" \
+                      --auth-mode login \
+                      --name "$SOURCE_CONTAINER_NAME" \
+                      --output none
+                  else
+                    echo "Container: $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT does´nt exist."
                   fi
 
                   echo "Environment for iScala archive deleted."
