@@ -113,7 +113,7 @@ stages:
               --output tsv)
 
             if [ "$CONTAINER_EXISTS" = "true" ]; then
-              echo "Container: $SOURCE_CONTAINER_NAME" "in Storage account: $SOURCE_STORAGE_ACCOUNT" "exists"
+              echo "Container: $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT exists"
               az storage container delete \
                 --account-name "$SOURCE_STORAGE_ACCOUNT" \
                 --auth-mode login \
