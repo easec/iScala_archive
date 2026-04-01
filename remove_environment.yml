@@ -151,6 +151,8 @@ stages:
                   STORAGE_ACCOUNT="$(storageAccount)"
                   CONTAINER_NAME="$(containerName)"
                   KEYVAULT="$(keyVaultName)"
+                  SOURCE_STORAGE_ACCOUNT="$(sourceStorageAccount)"
+                  SOURCE_CONTAINER_NAME="$(sourceContainerName)"
 
                   echo "Checking resource group: $RESOURCE_GROUP"
                   if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
