@@ -120,7 +120,7 @@ stages:
                 --name "$SOURCE_CONTAINER_NAME" \
                 --output none
             else
-              echo "Container: $SOURCE_CONTAINER_NAME" in Storage account: $SOURCE_STORAGE_ACCOUNT does´nt exist."
+              echo "Container: $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT does´nt exist."
             fi
 
             echo "Environment for iScala archive deleted."
