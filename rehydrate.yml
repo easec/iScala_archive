@@ -26,11 +26,11 @@ variables:
 
 # PROD
 - ${{ if eq(parameters.targetEnv, 'prod') }}:
-  - group: variable_iScalaArchive-prod
-  - name: resourceGroupName
-    value: rg-iscala-archive-prod
-  - name: rgLocation
-    value: swedencentral
+  - group: variable_iScalaArchive
+  - name: storageAccount
+    value: snapshottestsa
+  - name: sourceContainer
+    value: iscala-archive
   - name: containerName
     value: snapshot
 
