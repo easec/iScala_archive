@@ -128,7 +128,7 @@ stages:
 
             - task: AzureCLI@2
               inputs:
-                azureSubscription: "connection_snapshottestsa"
+                azureSubscription: ${{ parameters.azureServiceConnection }}
                 scriptType: "pscore"
                 scriptLocation: "inlineScript"
                 inlineScript: |
