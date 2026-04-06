@@ -99,7 +99,7 @@ stages:
             if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
               echo "Purging Key Vault: $KEYVAULT"
               az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
-              echo "Key Vault: $KEYVAULT purge started."
+              echo "Key Vault: $KEYVAULT purge started. It could take up to 10 minutes before Key Vault is purge."
             else
               echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
             fi
@@ -168,7 +168,7 @@ stages:
                   if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
                     echo "Purging Key Vault: $KEYVAULT"
                     az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
-                    echo "Key Vault: $KEYVAULT purge started."
+                    echo "Key Vault: $KEYVAULT purge started. It could take up to 10 minutes before Key Vault is purge."
                   else
                     echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
                   fi
