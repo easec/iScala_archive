@@ -97,6 +97,12 @@ stages:
             throw "AzCopy is not installed or not available in PATH on this agent."
           }
 
+          # Force a known AzCopy log directory
+          $azCopyLogDir = "$(Agent.TempDirectory)/azcopy-logs"
+          New-Item -ItemType Directory -Force -Path $azCopyLogDir | Out-Null
+          $env:AZCOPY_LOG_LOCATION = $azCopyLogDir
+
+          # Use short-lived user-delegation SAS for both ends
           $expiry = (Get-Date).ToUniversalTime().AddHours(4).ToString("yyyy-MM-ddTHH:mmZ")
 
           Write-Host "Generating SAS for source container..."
@@ -133,16 +139,24 @@ stages:
             $dstUrl = "https://$dstAccount.blob.core.windows.net/$dstContainer/$blobName`?$dstSas"
 
             Write-Host "Copying $blobName to $dstAccount/$dstContainer as PageBlob..."
-            azcopy copy $srcUrl $dstUrl --from-to=BlobBlob --blob-type=PageBlob
 
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "AzCopy failed. Showing recent log output..."
-              $latestLog = Get-ChildItem "$HOME/.azcopy" -Filter *.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            & azcopy copy $srcUrl $dstUrl --from-to=BlobBlob --blob-type=PageBlob --log-level=INFO
+            $azcopyExit = $LASTEXITCODE
+
+            if ($azcopyExit -ne 0) {
+              Write-Host "AzCopy failed for $blobName. Dumping latest log from $azCopyLogDir"
+              $latestLog = Get-ChildItem $azCopyLogDir -Filter *.log -ErrorAction SilentlyContinue |
+                          Sort-Object LastWriteTime -Descending |
+                          Select-Object -First 1
+
               if ($latestLog) {
                 Write-Host "Latest AzCopy log: $($latestLog.FullName)"
-                Get-Content $latestLog.FullName -Tail 80 | Write-Host
+                Get-Content $latestLog.FullName -Tail 120 | Write-Host
+              } else {
+                Write-Host "No AzCopy log file found in $azCopyLogDir"
               }
-              throw "AzCopy failed for blob '$blobName'"
+
+              throw "AzCopy failed for blob '$blobName' with exit code $azcopyExit"
             }
           }
 
