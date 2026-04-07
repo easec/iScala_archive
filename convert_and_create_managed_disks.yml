@@ -67,9 +67,9 @@ stages:
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
-          $srcAccount = "$(sourceStorageAccount)"
+          $srcAccount   = "$(sourceStorageAccount)"
           $srcContainer = "$(sourceContainer)"
-          $dstAccount = "$(targetStorageAccount)"
+          $dstAccount   = "$(targetStorageAccount)"
           $dstContainer = "$(targetContainer)"
 
           Write-Host "Ensuring destination container exists..."
@@ -98,9 +98,11 @@ stages:
             throw "AzCopy is not installed or not available in PATH on this agent."
           }
 
-          $env:AZCOPY_AUTO_LOGIN_TYPE = "SPN"
-          $env:AZCOPY_SPA_APPLICATION_ID = $env:servicePrincipalId
-          $env:AZCOPY_SPA_CLIENT_SECRET = $env:servicePrincipalKey
+          Write-Host "Azure CLI account context:"
+          az account show --query "{tenantId:tenantId, subscriptionId:id, user:user.name}" -o json
+
+          Write-Host "Configuring AzCopy to reuse Azure CLI login"
+          $env:AZCOPY_AUTO_LOGIN_TYPE = "AZCLI"
           $env:AZCOPY_TENANT_ID = $env:tenantId
 
           foreach ($row in $blobList) {
