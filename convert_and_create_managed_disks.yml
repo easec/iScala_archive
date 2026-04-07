@@ -13,39 +13,52 @@ parameters:
   default: Azure-Service-Connection-Sub
 
 variables:
-# DEV
+# Common source
+- name: sourceStorageAccount
+  value: snapshottestsa
+- name: sourceContainer
+  value: snapshot
+- name: sourceResourceGroup
+  value: rg-iscala-archive
+
+# DEV target
 - ${{ if eq(parameters.targetEnv, 'dev') }}:
   - group: variable_iScalaArchive
-  - name: storageAccount
-    value: snapshottestsa
-  - name: containerName
-    value: snapshot
-  - name: pageContainerName
-    value: snapshot-page
+  - name: targetStorageAccount
+    value: stiscalasnapshotdev
+  - name: targetResourceGroup
+    value: rg-iscala-archive-dev
+  - name: targetContainer
+    value: vhds
+  - name: location
+    value: westeurope
 
-# PROD
+# PROD target
 - ${{ if eq(parameters.targetEnv, 'prod') }}:
   - group: variable_iScalaArchive
-  - name: storageAccount
-    value: snapshottestsa
-  - name: containerName
-    value: snapshot
-  - name: pageContainerName
-    value: snapshot-page
+  - name: targetStorageAccount
+    value: stiscalasnapshotprod
+  - name: targetResourceGroup
+    value: rg-iscala-archive-prod
+  - name: targetContainer
+    value: vhds
+  - name: location
+    value: westeurope
 
 stages:
-- stage: ConvertAndCreateManagedDisks
-  displayName: Convert VHD block blobs to page blobs and create managed disks
+- stage: ConvertAndCreateDisks
+  displayName: Convert VHDs and create managed disks
   jobs:
-  - job: ConvertAndCreateManagedDisks
-    displayName: Convert and create managed disks
+  - job: ConvertAndCreateDisks
+    displayName: Convert block blob VHDs to page blobs and create managed disks
     pool:
       name: easec-pool
+
     steps:
     - checkout: self
 
     - task: AzureCLI@2
-      displayName: Convert block blob VHDs to page blobs with AzCopy
+      displayName: Copy VHD block blobs to target account as PageBlob
       inputs:
         azureSubscription: ${{ parameters.azureServiceConnection }}
         addSpnToEnvironment: true
@@ -54,74 +67,75 @@ stages:
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
-          $account       = "$(storageAccount)"
-          $srcContainer  = "$(containerName)"      # working container with VHD block blobs
-          $dstContainer  = "$(pageContainerName)"  # destination for PageBlobs
+          $srcAccount = "$(sourceStorageAccount)"
+          $srcContainer = "$(sourceContainer)"
+          $dstAccount = "$(targetStorageAccount)"
+          $dstContainer = "$(targetContainer)"
 
-          Write-Host "Ensuring destination container exists: $dstContainer"
+          Write-Host "Ensuring destination container exists..."
           az storage container create `
-            --account-name $account `
+            --account-name $dstAccount `
             --name $dstContainer `
             --auth-mode login `
             --only-show-errors | Out-Null
 
-          Write-Host "Discovering VHD block blobs in container '$srcContainer'..."
-          $blobs = az storage blob list `
-            --account-name $account `
+          Write-Host "Discovering VHD block blobs in source account..."
+          $blobList = az storage blob list `
+            --account-name $srcAccount `
             --container-name $srcContainer `
             --auth-mode login `
-            --query "[?properties.blobType=='BlockBlob' && (ends_with(name, '.vhd') || ends_with(name, '.VHD'))].name" `
-            -o tsv
+            --query "[?properties.blobType=='BlockBlob' && (ends_with(name, '.vhd') || ends_with(name, '.VHD'))].[name,properties.contentLength]" `
+            -o json | ConvertFrom-Json
 
-          if (-not $blobs) {
-            throw "No .VHD block blobs found in container '$srcContainer'."
+          if (-not $blobList -or $blobList.Count -eq 0) {
+            throw "No .vhd block blobs found in $srcAccount/$srcContainer"
           }
 
-          $blobList = @($blobs | Where-Object { $_ -and $_.Trim() -ne "" })
-
-          Write-Host "Found $($blobList.Count) VHD block blob(s):"
-          $blobList | ForEach-Object { Write-Host " - $_" }
+          Write-Host "Found $($blobList.Count) VHD block blob(s)."
+          $blobList | ForEach-Object { Write-Host " - $($_[0])" }
 
           if (-not (Get-Command azcopy -ErrorAction SilentlyContinue)) {
             throw "AzCopy is not installed or not available in PATH on this agent."
           }
 
-          Write-Host "Configuring AzCopy service principal auth..."
-          $env:AZCOPY_AUTO_LOGIN_TYPE   = "SPN"
+          $env:AZCOPY_AUTO_LOGIN_TYPE = "SPN"
           $env:AZCOPY_SPA_APPLICATION_ID = $env:servicePrincipalId
-          $env:AZCOPY_SPA_CLIENT_SECRET  = $env:servicePrincipalKey
-          $env:AZCOPY_TENANT_ID          = $env:tenantId
+          $env:AZCOPY_SPA_CLIENT_SECRET = $env:servicePrincipalKey
+          $env:AZCOPY_TENANT_ID = $env:tenantId
 
-          foreach ($blob in $blobList) {
-            $srcUrl = "https://$account.blob.core.windows.net/$srcContainer/$blob"
-            $dstUrl = "https://$account.blob.core.windows.net/$dstContainer/$blob"
+          foreach ($row in $blobList) {
+            $blobName = $row[0]
+            $srcUrl = "https://$srcAccount.blob.core.windows.net/$srcContainer/$blobName"
+            $dstUrl = "https://$dstAccount.blob.core.windows.net/$dstContainer/$blobName"
 
-            Write-Host "Copying '$blob' as PageBlob..."
+            Write-Host "Copying $blobName to $dstAccount/$dstContainer as PageBlob..."
             azcopy copy $srcUrl $dstUrl --from-to=BlobBlob --blob-type=PageBlob
 
             if ($LASTEXITCODE -ne 0) {
-              throw "AzCopy failed for blob '$blob'."
+              throw "AzCopy failed for blob '$blobName'"
             }
           }
 
-          Write-Host "Validating destination blob types..."
-          foreach ($blob in $blobList) {
+          Write-Host "Validating destination blobs..."
+          foreach ($row in $blobList) {
+            $blobName = $row[0]
+
             $blobType = az storage blob show `
-              --account-name $account `
+              --account-name $dstAccount `
               --container-name $dstContainer `
-              --name $blob `
+              --name $blobName `
               --auth-mode login `
               --query "properties.blobType" `
               -o tsv
 
-            Write-Host "$blob => $blobType"
+            Write-Host "$blobName => $blobType"
 
             if ($blobType -ne "PageBlob") {
-              throw "Blob '$blob' was not converted to PageBlob."
+              throw "Blob '$blobName' is not a PageBlob in destination."
             }
           }
 
-          Write-Host "Page blob conversion complete."
+          Write-Host "Copy and conversion complete."
 
     - task: AzureCLI@2
       displayName: Detect OS disk and create managed disks
@@ -132,21 +146,21 @@ stages:
         inlineScript: |
           $ErrorActionPreference = "Stop"
 
-          $account       = "$(storageAccount)"
-          $pageContainer = "$(pageContainerName)"
-          $rg            = "$(resourceGroupName)"
-          $location      = "$(location)"
+          $account = "$(targetStorageAccount)"
+          $container = "$(targetContainer)"
+          $rg = "$(targetResourceGroup)"
+          $location = "$(location)"
 
-          Write-Host "Discovering page blob VHDs in '$pageContainer'..."
+          Write-Host "Reading PageBlob VHDs from destination..."
           $pageBlobs = az storage blob list `
             --account-name $account `
-            --container-name $pageContainer `
+            --container-name $container `
             --auth-mode login `
             --query "[?properties.blobType=='PageBlob' && (ends_with(name, '.vhd') || ends_with(name, '.VHD'))].[name,properties.contentLength]" `
             -o json | ConvertFrom-Json
 
           if (-not $pageBlobs -or $pageBlobs.Count -eq 0) {
-            throw "No page blob VHDs found in container '$pageContainer'."
+            throw "No PageBlob VHDs found in $account/$container"
           }
 
           $report = @()
@@ -158,7 +172,6 @@ stages:
             $score = 0
             $reasons = @()
 
-            # Strong signals
             if ($name -match 'OSDisk') {
               $score += 150
               $reasons += "name contains OSDisk"
@@ -174,7 +187,6 @@ stages:
               $reasons += "name starts with S_"
             }
 
-            # Weak positive signals
             if ($name -match '(^|[_-])OS([_-]|$)') {
               $score += 40
               $reasons += "name suggests OS"
@@ -185,7 +197,6 @@ stages:
               $reasons += "name suggests Windows/system"
             }
 
-            # Negative signals
             if ($name -match 'DataDisk') {
               $score -= 100
               $reasons += "name contains DataDisk"
@@ -196,8 +207,6 @@ stages:
               $reasons += "name suggests temp/log/data disk"
             }
 
-            $sizeGiB = [math]::Round($sizeBytes / 1GB, 2)
-
             $diskName = ($name -replace '\.VHD$|\.vhd$','') `
                         -replace '[^A-Za-z0-9-]', '-' `
                         -replace '-+', '-' `
@@ -206,7 +215,7 @@ stages:
             $report += [pscustomobject]@{
               BlobName = $name
               DiskName = $diskName
-              SizeGiB  = $sizeGiB
+              SizeGiB  = [math]::Round($sizeBytes / 1GB, 2)
               Score    = $score
               Reasons  = ($reasons -join '; ')
             }
@@ -222,26 +231,26 @@ stages:
           }
 
           if ($osCandidate.Score -lt 50) {
-            throw "OS disk detection confidence too low. Top candidate: $($osCandidate.BlobName) with score $($osCandidate.Score)"
+            throw "OS disk detection confidence too low. Top candidate: $($osCandidate.BlobName), score: $($osCandidate.Score)"
           }
 
-          Write-Host "Chosen OS disk candidate: $($osCandidate.BlobName)"
+          Write-Host "Chosen OS disk: $($osCandidate.BlobName)"
 
           foreach ($item in $report) {
-            $vhdUri = "https://$account.blob.core.windows.net/$pageContainer/$($item.BlobName)"
+            $vhdUri = "https://$account.blob.core.windows.net/$container/$($item.BlobName)"
 
-            $diskExists = az disk show `
+            $existingDisk = az disk show `
               --resource-group $rg `
               --name $item.DiskName `
               --query "name" -o tsv 2>$null
 
-            if ($LASTEXITCODE -eq 0 -and $diskExists) {
-              Write-Host "Managed disk already exists, skipping: $($item.DiskName)"
+            if ($LASTEXITCODE -eq 0 -and $existingDisk) {
+              Write-Host "Managed disk already exists, skipping $($item.DiskName)"
               continue
             }
 
             if ($item.BlobName -eq $osCandidate.BlobName) {
-              Write-Host "Creating OS managed disk: $($item.DiskName)"
+              Write-Host "Creating OS managed disk $($item.DiskName)"
               az disk create `
                 --resource-group $rg `
                 --name $item.DiskName `
@@ -253,7 +262,7 @@ stages:
                 --only-show-errors
             }
             else {
-              Write-Host "Creating data managed disk: $($item.DiskName)"
+              Write-Host "Creating data managed disk $($item.DiskName)"
               az disk create `
                 --resource-group $rg `
                 --name $item.DiskName `
@@ -264,7 +273,7 @@ stages:
             }
 
             if ($LASTEXITCODE -ne 0) {
-              throw "Failed to create managed disk '$($item.DiskName)' from blob '$($item.BlobName)'."
+              throw "Failed to create managed disk '$($item.DiskName)'"
             }
           }
 
