@@ -27,27 +27,21 @@ variables:
     value: snapshot
   - name: keyVaultName
     value: kv-iscala-archive-dev
-  - name: sourceStorageAccount
-    value: snapshottestsa
-  - name: sourceContainerName
-    value: snapshot
 
 # PROD
 - ${{ if eq(parameters.targetEnv, 'prod') }}:
   - group: variable_iScalaArchive-prod
   - name: resourceGroupName
     value: rg-iscala-archive-prod
+  - name: storageAccount
+    value: stiscalasnapshotprod
+    # added because it was missing in prod
   - name: rgLocation
     value: swedencentral
   - name: containerName
     value: snapshot
   - name: keyVaultName
     value: kv-iscala-archive-prod
-  - name: sourceStorageAccount
-    value: snapshottestsa
-  - name: sourceContainerName
-    value: snapshot
-
 
 - name: deploymentPrincipalObjectId
   value: 94f97b9f-b688-4f99-a3ff-64e0e8a945d8
@@ -56,13 +50,13 @@ variables:
   value: /subscriptions/$(subscriptionId)/resourceGroups/$(resourceGroupName)/providers/Microsoft.Storage/storageAccounts/$(storageAccount)
 
 stages:
-- stage: Deploy
-  displayName: Deploy ${{ parameters.targetEnv }}
+- stage: Remove
+  displayName: Remove ${{ parameters.targetEnv }}
   jobs:
 
   - ${{ if eq(parameters.targetEnv, 'dev') }}:
-    - job: DeployDev
-      displayName: Deploy DEV
+    - job: RemoveDev
+      displayName: Remove DEV
       pool:
         name: easec-pool
       steps:
@@ -75,60 +69,39 @@ stages:
           scriptType: bash
           scriptLocation: inlineScript
           inlineScript: |
-            set -e
+            set -euo pipefail
+
             RESOURCE_GROUP="$(resourceGroupName)"
             LOCATION="$(rgLocation)"
-            STORAGE_ACCOUNT="$(storageAccount)"
-            CONTAINER_NAME="$(containerName)"
             KEYVAULT="$(keyVaultName)"
-            SOURCE_STORAGE_ACCOUNT="$(sourceStorageAccount)"
-            SOURCE_CONTAINER_NAME="$(sourceContainerName)"
 
+            echo "Removing environment resources for: $RESOURCE_GROUP"
+            echo "Shared storage account snapshottestsa will NOT be touched."
+            echo "Shared container snapshot will NOT be touched."
 
             echo "Checking resource group: $RESOURCE_GROUP"
             if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
-              az group delete --name "$RESOURCE_GROUP" --yes
-              echo "Resource group: $RESOURCE_GROUP deleted."
+              az group delete --name "$RESOURCE_GROUP" --yes --no-wait
+              echo "Resource group deletion started: $RESOURCE_GROUP"
             else
-              echo "Resource group: $RESOURCE_GROUP does´nt exist."
-
+              echo "Resource group does not exist: $RESOURCE_GROUP"
             fi
-            
-            echo "Checking if Key Vault $KEYVAULT exists in deleted list."
 
+            echo "Checking if Key Vault $KEYVAULT exists in deleted list."
             if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
               echo "Purging Key Vault: $KEYVAULT"
               az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
-              echo "Key Vault: $KEYVAULT purge started. It could take up to 10 minutes before Key Vault is purge."
+              echo "Key Vault purge started: $KEYVAULT"
             else
-              echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
+              echo "Key Vault not found in deleted list: $KEYVAULT"
             fi
 
-            echo "Checking blob container for snapshots (Hot): $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT"         
-            CONTAINER_EXISTS=$(az storage container exists \
-              --account-name "$SOURCE_STORAGE_ACCOUNT" \
-              --auth-mode login \
-              --name "$SOURCE_CONTAINER_NAME" \
-              --query "exists" \
-              --output tsv)
-
-            if [ "$CONTAINER_EXISTS" = "true" ]; then
-              echo "Container: $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT exists"
-              az storage container delete \
-                --account-name "$SOURCE_STORAGE_ACCOUNT" \
-                --auth-mode login \
-                --name "$SOURCE_CONTAINER_NAME" \
-                --output none
-            else
-              echo "Container: $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT does´nt exist."
-            fi
-
-            echo "Environment for iScala archive deleted."
-
+            echo "Environment removal started."
+            echo "Shared working container was NOT deleted."
 
   - ${{ if eq(parameters.targetEnv, 'prod') }}:
-    - deployment: DeployProd
-      displayName: Deploy PROD (requires approval)
+    - deployment: RemoveProd
+      displayName: Remove PROD (requires approval)
       environment: iscala-archive-prod
       pool:
         name: easec-pool
@@ -145,52 +118,32 @@ stages:
                 scriptType: bash
                 scriptLocation: inlineScript
                 inlineScript: |
-                  set -e
+                  set -euo pipefail
+
                   RESOURCE_GROUP="$(resourceGroupName)"
                   LOCATION="$(rgLocation)"
-                  STORAGE_ACCOUNT="$(storageAccount)"
-                  CONTAINER_NAME="$(containerName)"
                   KEYVAULT="$(keyVaultName)"
-                  SOURCE_STORAGE_ACCOUNT="$(sourceStorageAccount)"
-                  SOURCE_CONTAINER_NAME="$(sourceContainerName)"
+
+                  echo "Removing environment resources for: $RESOURCE_GROUP"
+                  echo "Shared storage account snapshottestsa will NOT be touched."
+                  echo "Shared container snapshot will NOT be touched."
 
                   echo "Checking resource group: $RESOURCE_GROUP"
                   if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
-                    az group delete --name "$RESOURCE_GROUP" --yes
-                    echo "Resource group: $RESOURCE_GROUP deleted."
+                    az group delete --name "$RESOURCE_GROUP" --yes --no-wait
+                    echo "Resource group deletion started: $RESOURCE_GROUP"
                   else
-                    echo "Resource group: $RESOURCE_GROUP does´nt exist."
-
+                    echo "Resource group does not exist: $RESOURCE_GROUP"
                   fi
-                  
-                  echo "Checking if Key Vault $KEYVAULT exists in deleted list."
 
+                  echo "Checking if Key Vault $KEYVAULT exists in deleted list."
                   if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
                     echo "Purging Key Vault: $KEYVAULT"
                     az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
-                    echo "Key Vault: $KEYVAULT purge started. It could take up to 10 minutes before Key Vault is purge."
+                    echo "Key Vault purge started: $KEYVAULT"
                   else
-                    echo "Key Vault $KEYVAULT was not found in deleted vault list, already purge."
+                    echo "Key Vault not found in deleted list: $KEYVAULT"
                   fi
 
-                  echo "Checking blob container for snapshots (Hot): $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT"         
-                  CONTAINER_EXISTS=$(az storage container exists \
-                    --account-name "$SOURCE_STORAGE_ACCOUNT" \
-                    --auth-mode login \
-                    --name "$SOURCE_CONTAINER_NAME" \
-                    --query "exists" \
-                    --output tsv)
-
-                  if [ "$CONTAINER_EXISTS" = "true" ]; then
-                    echo "Container: $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT exists"
-                    az storage container delete \
-                      --account-name "$SOURCE_STORAGE_ACCOUNT" \
-                      --auth-mode login \
-                      --name "$SOURCE_CONTAINER_NAME" \
-                      --output none
-                  else
-                    echo "Container: $SOURCE_CONTAINER_NAME in Storage account: $SOURCE_STORAGE_ACCOUNT does´nt exist."
-                  fi
-
-                  echo "Environment for iScala archive deleted."
-
+                  echo "Environment removal started."
+                  echo "Shared working container was NOT deleted."
