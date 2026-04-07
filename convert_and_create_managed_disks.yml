@@ -29,7 +29,7 @@ variables:
   - name: targetResourceGroup
     value: rg-iscala-archive-dev
   - name: targetContainer
-    value: vhds
+    value: snapshot-page
   - name: location
     value: swedencentral
 
@@ -41,7 +41,7 @@ variables:
   - name: targetResourceGroup
     value: rg-iscala-archive-prod
   - name: targetContainer
-    value: vhds
+    value: snapshot-page
   - name: location
     value: swedencentral
 
