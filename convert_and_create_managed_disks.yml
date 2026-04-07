@@ -1,0 +1,268 @@
+trigger: none
+
+parameters:
+- name: targetEnv
+  type: string
+  default: dev
+  values:
+  - dev
+  - prod
+
+- name: azureServiceConnection
+  type: string
+  default: Azure-Service-Connection-Sub
+
+variables:
+- ${{ if eq(parameters.targetEnv, 'dev') }}:
+  - group: variable_iScalaArchive
+  - name: storageAccount
+    value: snapshottestsa
+  - name: containerName
+    value: snapshot
+  - name: pageContainerName
+    value: snapshot-page
+
+- ${{ if eq(parameters.targetEnv, 'prod') }}:
+  - group: variable_iScalaArchive
+  - name: storageAccount
+    value: snapshottestsa
+  - name: containerName
+    value: snapshot
+  - name: pageContainerName
+    value: snapshot-page
+
+stages:
+- stage: ConvertAndCreateDisks
+  displayName: Convert VHD block blobs to page blobs and create managed disks
+  jobs:
+  - job: ConvertAndCreateDisks
+    pool:
+      name: easec-pool
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: Convert VHD block blobs to page blobs
+      inputs:
+        azureSubscription: ${{ parameters.azureServiceConnection }}
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          $ErrorActionPreference = "Stop"
+
+          $account       = "$(storageAccount)"
+          $srcContainer  = "$(containerName)"
+          $pageContainer = "$(pageContainerName)"
+
+          az storage container create `
+            --account-name $account `
+            --name $pageContainer `
+            --auth-mode login `
+            --only-show-errors | Out-Null
+
+          $blobs = az storage blob list `
+            --account-name $account `
+            --container-name $srcContainer `
+            --auth-mode login `
+            --query "[?properties.blobType=='BlockBlob' && (ends_with(name, '.vhd') || ends_with(name, '.VHD'))].[name,properties.contentLength]" `
+            -o json | ConvertFrom-Json
+
+          if (-not $blobs -or $blobs.Count -eq 0) {
+            throw "No .VHD block blobs found in container '$srcContainer'."
+          }
+
+          foreach ($entry in $blobs) {
+            $blob = $entry[0]
+            Write-Host "Starting PageBlob copy for $blob"
+
+            az storage blob copy start `
+              --account-name $account `
+              --auth-mode login `
+              --source-container $srcContainer `
+              --source-blob $blob `
+              --destination-container $pageContainer `
+              --destination-blob $blob `
+              --destination-blob-type PageBlob `
+              --only-show-errors | Out-Null
+          }
+
+          $timeoutMinutes = 360
+          $start = Get-Date
+
+          while ($true) {
+            $pending = @()
+
+            foreach ($entry in $blobs) {
+              $blob = $entry[0]
+
+              $status = az storage blob show `
+                --account-name $account `
+                --container-name $pageContainer `
+                --name $blob `
+                --auth-mode login `
+                --query "properties.copy.status" `
+                -o tsv 2>$null
+
+              $blobType = az storage blob show `
+                --account-name $account `
+                --container-name $pageContainer `
+                --name $blob `
+                --auth-mode login `
+                --query "properties.blobType" `
+                -o tsv 2>$null
+
+              Write-Host "$blob | copy.status=$status | blobType=$blobType"
+
+              if ($status -eq "failed" -or $status -eq "aborted") {
+                throw "Copy failed for '$blob' with status '$status'."
+              }
+
+              if ($status -ne "success" -or $blobType -ne "PageBlob") {
+                $pending += $blob
+              }
+            }
+
+            if ($pending.Count -eq 0) {
+              Write-Host "All VHDs are now PageBlobs."
+              break
+            }
+
+            if (((Get-Date) - $start).TotalMinutes -gt $timeoutMinutes) {
+              throw "Timed out waiting for page blob conversion. Pending: $($pending -join ', ')"
+            }
+
+            Start-Sleep -Seconds 60
+          }
+
+    - task: AzureCLI@2
+      displayName: Validate VHDs and create managed disks
+      inputs:
+        azureSubscription: ${{ parameters.azureServiceConnection }}
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          $ErrorActionPreference = "Stop"
+
+          $account       = "$(storageAccount)"
+          $pageContainer = "$(pageContainerName)"
+          $rg            = "$(resourceGroupName)"
+          $location      = "$(location)"
+
+          $blobRows = az storage blob list `
+            --account-name $account `
+            --container-name $pageContainer `
+            --auth-mode login `
+            --query "[?properties.blobType=='PageBlob' && (ends_with(name, '.vhd') || ends_with(name, '.VHD'))].[name,properties.contentLength,properties.blobType]" `
+            -o json | ConvertFrom-Json
+
+          if (-not $blobRows -or $blobRows.Count -eq 0) {
+            throw "No PageBlob VHDs found in '$pageContainer'."
+          }
+
+          $report = @()
+
+          foreach ($row in $blobRows) {
+            $name = $row[0]
+            $sizeBytes = [int64]$row[1]
+            $blobType = $row[2]
+
+            $score = 0
+            $reasons = @()
+
+            if ($name -match 'Cdisken') {
+              $score += 100
+              $reasons += "name contains Cdisken"
+            }
+
+            if ($name -match '^S_') {
+              $score += 40
+              $reasons += "name starts with S_"
+            }
+
+            if ($name -match 'OS|System|Windows') {
+              $score += 25
+              $reasons += "name suggests OS/system"
+            }
+
+            if ($name -match 'TEMP|TEMPDB|LOG|DATA') {
+              $score -= 60
+              $reasons += "name suggests data/temp/log disk"
+            }
+
+            $sizeGiB = [math]::Round($sizeBytes / 1GB, 2)
+
+            $alignmentOk = (($sizeBytes - 512) % 1MB -eq 0)
+            if ($alignmentOk) {
+              $reasons += "size looks compatible with VHD footer/alignment check"
+            }
+            else {
+              $reasons += "size may fail VHD alignment/footer check"
+            }
+
+            $diskName = ($name -replace '\.VHD$|\.vhd$','') `
+                        -replace '[^A-Za-z0-9-]', '-' `
+                        -replace '-+', '-' `
+                        -replace '^-|-$',''
+
+            $report += [pscustomobject]@{
+              BlobName     = $name
+              BlobType     = $blobType
+              SizeGiB      = $sizeGiB
+              Heuristic    = $score
+              AlignmentOk  = $alignmentOk
+              Reasons      = ($reasons -join '; ')
+              DiskName     = $diskName
+            }
+          }
+
+          Write-Host "Validation report:"
+          $report | Sort-Object Heuristic -Descending | Format-Table -AutoSize | Out-String | Write-Host
+
+          $osCandidate = $report | Sort-Object Heuristic -Descending | Select-Object -First 1
+
+          if (-not $osCandidate) {
+            throw "Could not determine OS disk candidate."
+          }
+
+          if ($osCandidate.Heuristic -lt 40) {
+            throw "OS disk detection confidence is too low. Top candidate: $($osCandidate.BlobName) with score $($osCandidate.Heuristic)."
+          }
+
+          Write-Host "Chosen OS disk candidate: $($osCandidate.BlobName)"
+
+          foreach ($item in $report) {
+            $vhdUri = "https://$account.blob.core.windows.net/$pageContainer/$($item.BlobName)"
+
+            $diskExists = az disk show `
+              --resource-group $rg `
+              --name $item.DiskName `
+              --query "name" -o tsv 2>$null
+
+            if ($LASTEXITCODE -eq 0 -and $diskExists) {
+              Write-Host "Managed disk already exists, skipping: $($item.DiskName)"
+              continue
+            }
+
+            if ($item.BlobName -eq $osCandidate.BlobName) {
+              Write-Host "Creating OS managed disk: $($item.DiskName)"
+              az disk create `
+                --resource-group $rg `
+                --name $item.DiskName `
+                --location $location `
+                --source $vhdUri `
+                --os-type Windows `
+                --hyper-v-generation V1 `
+                --sku StandardSSD_LRS `
+                --only-show-errors
+            }
+            else {
+              Write-Host "Creating data managed disk: $($item.DiskName)"
+              az disk create `
+                --resource-group $rg `
+                --name $item.DiskName `
+                --location $location `
+                --source $vhdUri `
+                --sku StandardSSD_LRS `
+                --only-show-errors
+            }
+          }
