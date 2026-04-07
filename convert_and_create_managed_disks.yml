@@ -61,7 +61,6 @@ stages:
       displayName: Copy VHD block blobs to target account as PageBlob
       inputs:
         azureSubscription: ${{ parameters.azureServiceConnection }}
-        addSpnToEnvironment: true
         scriptType: pscore
         scriptLocation: inlineScript
         inlineScript: |
@@ -98,22 +97,51 @@ stages:
             throw "AzCopy is not installed or not available in PATH on this agent."
           }
 
-          Write-Host "Azure CLI account context:"
-          az account show --query "{tenantId:tenantId, subscriptionId:id, user:user.name}" -o json
+          $expiry = (Get-Date).ToUniversalTime().AddHours(4).ToString("yyyy-MM-ddTHH:mmZ")
 
-          Write-Host "Configuring AzCopy to reuse Azure CLI login"
-          $env:AZCOPY_AUTO_LOGIN_TYPE = "AZCLI"
-          $env:AZCOPY_TENANT_ID = $env:tenantId
+          Write-Host "Generating SAS for source container..."
+          $srcSas = az storage container generate-sas `
+            --account-name $srcAccount `
+            --name $srcContainer `
+            --auth-mode login `
+            --as-user `
+            --permissions rl `
+            --expiry $expiry `
+            -o tsv
+
+          if (-not $srcSas) {
+            throw "Failed to generate SAS for source container."
+          }
+
+          Write-Host "Generating SAS for destination container..."
+          $dstSas = az storage container generate-sas `
+            --account-name $dstAccount `
+            --name $dstContainer `
+            --auth-mode login `
+            --as-user `
+            --permissions racwdl `
+            --expiry $expiry `
+            -o tsv
+
+          if (-not $dstSas) {
+            throw "Failed to generate SAS for destination container."
+          }
 
           foreach ($row in $blobList) {
             $blobName = $row[0]
-            $srcUrl = "https://$srcAccount.blob.core.windows.net/$srcContainer/$blobName"
-            $dstUrl = "https://$dstAccount.blob.core.windows.net/$dstContainer/$blobName"
+            $srcUrl = "https://$srcAccount.blob.core.windows.net/$srcContainer/$blobName`?$srcSas"
+            $dstUrl = "https://$dstAccount.blob.core.windows.net/$dstContainer/$blobName`?$dstSas"
 
             Write-Host "Copying $blobName to $dstAccount/$dstContainer as PageBlob..."
             azcopy copy $srcUrl $dstUrl --from-to=BlobBlob --blob-type=PageBlob
 
             if ($LASTEXITCODE -ne 0) {
+              Write-Host "AzCopy failed. Showing recent log output..."
+              $latestLog = Get-ChildItem "$HOME/.azcopy" -Filter *.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if ($latestLog) {
+                Write-Host "Latest AzCopy log: $($latestLog.FullName)"
+                Get-Content $latestLog.FullName -Tail 80 | Write-Host
+              }
               throw "AzCopy failed for blob '$blobName'"
             }
           }
