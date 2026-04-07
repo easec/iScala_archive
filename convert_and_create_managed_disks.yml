@@ -69,6 +69,21 @@ stages:
           $dstAccount   = "$(targetStorageAccount)"
           $dstContainer = "$(targetContainer)"
 
+          Write-Host "=== RESOLVED VALUES ==="
+          Write-Host "sourceStorageAccount = $srcAccount"
+          Write-Host "sourceContainer      = $srcContainer"
+          Write-Host "targetStorageAccount = $dstAccount"
+          Write-Host "targetContainer      = $dstContainer"
+
+          if ($srcContainer -ne "snapshot") {
+            throw "Wrong source container resolved: '$srcContainer'. Expected 'snapshot'."
+          }
+
+                    $srcAccount   = "$(sourceStorageAccount)"
+                    $srcContainer = "$(sourceContainer)"
+                    $dstAccount   = "$(targetStorageAccount)"
+                    $dstContainer = "$(targetContainer)"
+
           Write-Host "Ensuring destination container exists..."
           az storage container create `
             --account-name $dstAccount `
