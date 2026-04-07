@@ -31,7 +31,7 @@ variables:
   - name: targetContainer
     value: vhds
   - name: location
-    value: westeurope
+    value: swedencentral
 
 # PROD target
 - ${{ if eq(parameters.targetEnv, 'prod') }}:
@@ -43,7 +43,7 @@ variables:
   - name: targetContainer
     value: vhds
   - name: location
-    value: westeurope
+    value: swedencentral
 
 stages:
 - stage: ConvertAndCreateDisks
