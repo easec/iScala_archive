@@ -12,8 +12,8 @@ parameters:
   type: string
   default: Azure-Service-Connection-Sub
 
+
 variables:
-# Common source
 - name: sourceStorageAccount
   value: snapshottestsa
 - name: sourceContainer
@@ -21,9 +21,7 @@ variables:
 - name: sourceResourceGroup
   value: rg-iscala-archive
 
-# DEV target
 - ${{ if eq(parameters.targetEnv, 'dev') }}:
-  - group: variable_iScalaArchive
   - name: targetStorageAccount
     value: stiscalasnapshotdev
   - name: targetResourceGroup
@@ -32,10 +30,9 @@ variables:
     value: vhds
   - name: location
     value: swedencentral
-
-# PROD target
-- ${{ if eq(parameters.targetEnv, 'prod') }}:
   - group: variable_iScalaArchive
+
+- ${{ if eq(parameters.targetEnv, 'prod') }}:
   - name: targetStorageAccount
     value: stiscalasnapshotprod
   - name: targetResourceGroup
@@ -44,6 +41,7 @@ variables:
     value: vhds
   - name: location
     value: swedencentral
+  - group: variable_iScalaArchive
 
 stages:
 - stage: ConvertAndCreateDisks
