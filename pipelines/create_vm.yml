@@ -1,0 +1,254 @@
+trigger: none
+pr: none
+
+parameters:
+- name: targetEnv
+  type: string
+  default: dev
+  values:
+  - dev
+  - prod
+
+- name: azureServiceConnection
+  type: string
+  default: Azure-Service-Connection-Sub
+
+variables:
+# DEV
+- ${{ if eq(parameters.targetEnv, 'dev') }}:
+  - group: variable_iScalaArchive
+  - name: targetResourceGroup
+    value: rg-iscala-archive-dev
+  - name: location
+    value: swedencentral
+  - name: vmName
+    value: iscala-archive-dev-vm
+  - name: vmSize
+    value: Standard_D4s_v5
+  - name: vnetName
+    value: iscala-archive-dev-vnet
+  - name: subnetName
+    value: default
+  - name: nicName
+    value: iscala-archive-dev-nic
+  - name: vnetAddressPrefix
+    value: 10.60.0.0/16
+  - name: subnetPrefix
+    value: 10.60.1.0/24
+  - name: adminUsername
+    value: azureuser
+  - name: deploymentEnvironment
+    value: iscala-archive-dev
+
+# PROD
+- ${{ if eq(parameters.targetEnv, 'prod') }}:
+  - group: variable_iScalaArchive-prod
+  - name: targetResourceGroup
+    value: rg-iscala-archive-prod
+  - name: location
+    value: swedencentral
+  - name: vmName
+    value: iscala-archive-prod-vm
+  - name: vmSize
+    value: Standard_D4s_v5
+  - name: vnetName
+    value: iscala-archive-prod-vnet
+  - name: subnetName
+    value: default
+  - name: nicName
+    value: iscala-archive-prod-nic
+  - name: vnetAddressPrefix
+    value: 10.61.0.0/16
+  - name: subnetPrefix
+    value: 10.61.1.0/24
+  - name: adminUsername
+    value: azureuser
+  - name: deploymentEnvironment
+    value: iscala-archive-prod
+
+stages:
+- stage: CreateVm
+  displayName: Create VM from managed disks
+  jobs:
+  - deployment: CreateVm
+    displayName: Create VM
+    environment: $(deploymentEnvironment)
+    pool:
+      name: easec-pool
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: Create VM from managed disks
+            inputs:
+              azureSubscription: ${{ parameters.azureServiceConnection }}
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $ErrorActionPreference = "Stop"
+
+                $rg            = "$(targetResourceGroup)"
+                $location      = "$(location)"
+                $vmName        = "$(vmName)"
+                $vmSize        = "$(vmSize)"
+                $vnetName      = "$(vnetName)"
+                $subnetName    = "$(subnetName)"
+                $nicName       = "$(nicName)"
+                $vnetPrefix    = "$(vnetAddressPrefix)"
+                $subnetPrefix  = "$(subnetPrefix)"
+                $adminUsername = "$(adminUsername)"
+
+                Write-Host "Resource group : $rg"
+                Write-Host "VM name        : $vmName"
+                Write-Host "Location       : $location"
+
+                # Find managed disks in the target RG
+                $diskRows = az disk list `
+                  --resource-group $rg `
+                  --query "[].[name,id]" `
+                  -o json | ConvertFrom-Json
+
+                if (-not $diskRows -or $diskRows.Count -eq 0) {
+                  throw "No managed disks found in resource group '$rg'. Run the disk-creation pipeline first."
+                }
+
+                $report = @()
+
+                foreach ($row in $diskRows) {
+                  $name = $row[0]
+                  $id   = $row[1]
+
+                  $score = 0
+                  $reasons = @()
+
+                  if ($name -match 'OSDisk') {
+                    $score += 150
+                    $reasons += "name contains OSDisk"
+                  }
+                  if ($name -match 'Cdisken') {
+                    $score += 120
+                    $reasons += "name contains Cdisken"
+                  }
+                  if ($name -match '^S-') {
+                    $score += 40
+                    $reasons += "name starts with S-"
+                  }
+                  if ($name -match 'DataDisk') {
+                    $score -= 100
+                    $reasons += "name contains DataDisk"
+                  }
+                  if ($name -match 'TEMP|TEMPDB|LOG|DATA') {
+                    $score -= 80
+                    $reasons += "name suggests temp/log/data disk"
+                  }
+
+                  $report += [pscustomobject]@{
+                    DiskName = $name
+                    DiskId   = $id
+                    Score    = $score
+                    Reasons  = ($reasons -join '; ')
+                  }
+                }
+
+                Write-Host "Disk detection report:"
+                $report | Sort-Object Score -Descending | Format-Table -AutoSize | Out-String | Write-Host
+
+                $osDisk = $report | Sort-Object Score -Descending | Select-Object -First 1
+
+                if (-not $osDisk -or $osDisk.Score -lt 50) {
+                  throw "OS disk detection confidence too low."
+                }
+
+                $dataDisks = $report | Where-Object { $_.DiskName -ne $osDisk.DiskName }
+
+                Write-Host "Chosen OS disk: $($osDisk.DiskName)"
+
+                # Create or reuse VNet
+                $vnetExists = az network vnet show `
+                  --resource-group $rg `
+                  --name $vnetName `
+                  --query "name" -o tsv 2>$null
+
+                if (-not $vnetExists) {
+                  Write-Host "Creating VNet: $vnetName"
+                  az network vnet create `
+                    --resource-group $rg `
+                    --location $location `
+                    --name $vnetName `
+                    --address-prefixes $vnetPrefix `
+                    --subnet-name $subnetName `
+                    --subnet-prefixes $subnetPrefix `
+                    --only-show-errors | Out-Null
+                }
+                else {
+                  Write-Host "VNet already exists: $vnetName"
+                }
+
+                # Create or reuse NIC
+                $nicExists = az network nic show `
+                  --resource-group $rg `
+                  --name $nicName `
+                  --query "name" -o tsv 2>$null
+
+                if (-not $nicExists) {
+                  Write-Host "Creating NIC: $nicName"
+                  az network nic create `
+                    --resource-group $rg `
+                    --location $location `
+                    --name $nicName `
+                    --vnet-name $vnetName `
+                    --subnet $subnetName `
+                    --only-show-errors | Out-Null
+                }
+                else {
+                  Write-Host "NIC already exists: $nicName"
+                }
+
+                # Create VM if missing
+                $vmExists = az vm show `
+                  --resource-group $rg `
+                  --name $vmName `
+                  --query "name" -o tsv 2>$null
+
+                if (-not $vmExists) {
+                  Write-Host "Creating VM: $vmName"
+                  az vm create `
+                    --resource-group $rg `
+                    --name $vmName `
+                    --attach-os-disk $osDisk.DiskName `
+                    --os-type Windows `
+                    --size $vmSize `
+                    --nics $nicName `
+                    --admin-username $adminUsername `
+                    --enable-agent true `
+                    --only-show-errors | Out-Null
+                }
+                else {
+                  Write-Host "VM already exists: $vmName"
+                }
+
+                # Attach data disks
+                foreach ($disk in $dataDisks) {
+                  $alreadyAttached = az vm show `
+                    --resource-group $rg `
+                    --name $vmName `
+                    --query "storageProfile.dataDisks[?name=='$($disk.DiskName)'] | length(@)" `
+                    -o tsv
+
+                  if ($alreadyAttached -eq "0") {
+                    Write-Host "Attaching data disk: $($disk.DiskName)"
+                    az vm disk attach `
+                      --resource-group $rg `
+                      --vm-name $vmName `
+                      --name $disk.DiskName `
+                      --only-show-errors | Out-Null
+                  }
+                  else {
+                    Write-Host "Disk already attached: $($disk.DiskName)"
+                  }
+                }
+
+                Write-Host "VM pipeline complete."
