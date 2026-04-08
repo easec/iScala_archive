@@ -202,6 +202,82 @@ stages:
                   Write-Host "NIC already exists: $nicName"
                 }
 
+                # Quota pre-check
+                Write-Host "Checking quota for VM size: $vmSize in region: $location"
+
+                $vmSizeInfo = az vm list-sizes `
+                  --location $location `
+                  --query "[?name=='$vmSize'] | [0]" `
+                  -o json | ConvertFrom-Json
+
+                if (-not $vmSizeInfo) {
+                  throw "VM size '$vmSize' was not found in region '$location'."
+                }
+
+                $requiredCores = [int]$vmSizeInfo.numberOfCores
+                Write-Host "VM size $vmSize requires $requiredCores vCPU(s)."
+
+                $usage = az vm list-usage `
+                  --location $location `
+                  -o json | ConvertFrom-Json
+
+                if (-not $usage) {
+                  throw "Could not read VM quota usage for region '$location'."
+                }
+
+                # Total regional cores
+                $totalRegional = $usage | Where-Object { $_.name.value -eq "cores" }
+
+                if (-not $totalRegional) {
+                  throw "Could not find total regional vCPU quota in usage output."
+                }
+
+                $totalCurrent = [int]$totalRegional.currentValue
+                $totalLimit   = [int]$totalRegional.limit
+                $totalAvail   = $totalLimit - $totalCurrent
+
+                Write-Host "Regional cores: used=$totalCurrent limit=$totalLimit available=$totalAvail"
+
+                if ($totalAvail -lt $requiredCores) {
+                  throw "QuotaExceeded: Not enough regional vCPU quota in '$location'. Required=$requiredCores, available=$totalAvail."
+                }
+
+                # Family quota
+                # Example for Standard_D4s_v5 -> standardDSv5Family
+                $familyCode = $null
+
+                if ($vmSize -match '_v5$' -and $vmSize -match '^Standard_D\d+s_v5$') {
+                  $familyCode = "standardDSv5Family"
+                }
+                elseif ($vmSize -match '^Standard_D\d+as_v5$') {
+                  $familyCode = "standardDASv5Family"
+                }
+                elseif ($vmSize -match '^Standard_D\d+ads_v5$') {
+                  $familyCode = "standardDADSv5Family"
+                }
+
+                if ($familyCode) {
+                  $familyUsage = $usage | Where-Object { $_.name.value -eq $familyCode }
+
+                  if ($familyUsage) {
+                    $familyCurrent = [int]$familyUsage.currentValue
+                    $familyLimit   = [int]$familyUsage.limit
+                    $familyAvail   = $familyLimit - $familyCurrent
+
+                    Write-Host "Family quota ($familyCode): used=$familyCurrent limit=$familyLimit available=$familyAvail"
+
+                    if ($familyAvail -lt $requiredCores) {
+                      throw "QuotaExceeded: Not enough $familyCode quota in '$location'. Required=$requiredCores, available=$familyAvail."
+                    }
+                  }
+                  else {
+                    Write-Warning "Could not find family quota '$familyCode' in usage output. Continuing based on regional quota only."
+                  }
+                }
+                else {
+                  Write-Warning "No family quota mapping implemented for VM size '$vmSize'. Continuing based on regional quota only."
+                }
+
                 # Create VM if missing
                 $vmExists = az vm show `
                   --resource-group $rg `
