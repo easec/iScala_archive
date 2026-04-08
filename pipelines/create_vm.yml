@@ -35,8 +35,6 @@ variables:
     value: 10.60.0.0/16
   - name: subnetPrefix
     value: 10.60.1.0/24
-  - name: adminUsername
-    value: azureuser
   - name: deploymentEnvironment
     value: iscala-archive-dev
 
@@ -61,8 +59,6 @@ variables:
     value: 10.61.0.0/16
   - name: subnetPrefix
     value: 10.61.1.0/24
-  - name: adminUsername
-    value: azureuser
   - name: deploymentEnvironment
     value: iscala-archive-prod
 
@@ -90,16 +86,15 @@ stages:
               inlineScript: |
                 $ErrorActionPreference = "Stop"
 
-                $rg            = "$(targetResourceGroup)"
-                $location      = "$(location)"
-                $vmName        = "$(vmName)"
-                $vmSize        = "$(vmSize)"
-                $vnetName      = "$(vnetName)"
-                $subnetName    = "$(subnetName)"
-                $nicName       = "$(nicName)"
-                $vnetPrefix    = "$(vnetAddressPrefix)"
-                $subnetPrefix  = "$(subnetPrefix)"
-                $adminUsername = "$(adminUsername)"
+                $rg           = "$(targetResourceGroup)"
+                $location     = "$(location)"
+                $vmName       = "$(vmName)"
+                $vmSize       = "$(vmSize)"
+                $vnetName     = "$(vnetName)"
+                $subnetName   = "$(subnetName)"
+                $nicName      = "$(nicName)"
+                $vnetPrefix   = "$(vnetAddressPrefix)"
+                $subnetPrefix = "$(subnetPrefix)"
 
                 Write-Host "Resource group : $rg"
                 Write-Host "VM name        : $vmName"
@@ -218,33 +213,50 @@ stages:
                   az vm create `
                     --resource-group $rg `
                     --name $vmName `
-                    --attach-os-disk $osDisk.DiskName `
+                    --attach-os-disk $($osDisk.DiskName) `
                     --os-type Windows `
                     --size $vmSize `
                     --nics $nicName `
-                    --admin-username $adminUsername `
                     --enable-agent true `
                     --only-show-errors | Out-Null
+
+                  if ($LASTEXITCODE -ne 0) {
+                    throw "VM creation failed for '$vmName'."
+                  }
                 }
                 else {
                   Write-Host "VM already exists: $vmName"
                 }
 
+                # Confirm VM exists before attaching data disks
+                $vmExists = az vm show `
+                  --resource-group $rg `
+                  --name $vmName `
+                  --query "name" -o tsv 2>$null
+
+                if (-not $vmExists) {
+                  throw "VM '$vmName' does not exist, so data disks cannot be attached."
+                }
+
                 # Attach data disks
                 foreach ($disk in $dataDisks) {
-                  $alreadyAttached = az vm show `
+                  $attachedCount = az vm show `
                     --resource-group $rg `
                     --name $vmName `
-                    --query "storageProfile.dataDisks[?name=='$($disk.DiskName)'] | length(@)" `
+                    --query "length(storageProfile.dataDisks[?name=='$($disk.DiskName)'])" `
                     -o tsv
 
-                  if ($alreadyAttached -eq "0") {
+                  if ($attachedCount -eq "0") {
                     Write-Host "Attaching data disk: $($disk.DiskName)"
                     az vm disk attach `
                       --resource-group $rg `
                       --vm-name $vmName `
                       --name $disk.DiskName `
                       --only-show-errors | Out-Null
+
+                    if ($LASTEXITCODE -ne 0) {
+                      throw "Failed to attach data disk '$($disk.DiskName)'."
+                    }
                   }
                   else {
                     Write-Host "Disk already attached: $($disk.DiskName)"
