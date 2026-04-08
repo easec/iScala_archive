@@ -210,15 +210,16 @@ stages:
 
                 if (-not $vmExists) {
                   Write-Host "Creating VM: $vmName"
+                  Write-Host "Using OS disk ID: $($osDisk.DiskId)"
+
                   az vm create `
                     --resource-group $rg `
                     --name $vmName `
-                    --attach-os-disk $($osDisk.DiskName) `
+                    --attach-os-disk $($osDisk.DiskId) `
                     --os-type Windows `
                     --size $vmSize `
                     --nics $nicName `
-                    --enable-agent true `
-                    --only-show-errors | Out-Null
+                    -o json
 
                   if ($LASTEXITCODE -ne 0) {
                     throw "VM creation failed for '$vmName'."
@@ -261,6 +262,6 @@ stages:
                   else {
                     Write-Host "Disk already attached: $($disk.DiskName)"
                   }
-                }
+
 
                 Write-Host "VM pipeline complete."
