@@ -253,7 +253,7 @@ stages:
                       --resource-group $rg `
                       --vm-name $vmName `
                       --name $disk.DiskName `
-                      --debug
+                      --only-show-errors | Out-Null
 
                     if ($LASTEXITCODE -ne 0) {
                       throw "Failed to attach data disk '$($disk.DiskName)'."
