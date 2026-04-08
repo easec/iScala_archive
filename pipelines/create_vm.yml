@@ -13,6 +13,18 @@ parameters:
   type: string
   default: Azure-Service-Connection-Sub
 
+- name: vmSize
+  type: string
+  default: Standard_D4s_v5
+
+- name: createPublicIp
+  type: boolean
+  default: false
+
+- name: allowPublicIpInProd
+  type: boolean
+  default: false
+
 variables:
 # DEV
 - ${{ if eq(parameters.targetEnv, 'dev') }}:
@@ -23,14 +35,16 @@ variables:
     value: swedencentral
   - name: vmName
     value: iscala-archive-dev-vm
-  - name: vmSize
-    value: Standard_D4s_v5
+  - name: vmSizeVar
+    value: ${{ parameters.vmSize }}
   - name: vnetName
     value: iscala-archive-dev-vnet
   - name: subnetName
     value: default
   - name: nicName
     value: iscala-archive-dev-nic
+  - name: publicIpName
+    value: iscala-archive-dev-pip
   - name: vnetAddressPrefix
     value: 10.60.0.0/16
   - name: subnetPrefix
@@ -47,14 +61,16 @@ variables:
     value: swedencentral
   - name: vmName
     value: iscala-archive-prod-vm
-  - name: vmSize
-    value: Standard_D4s_v5
+  - name: vmSizeVar
+    value: ${{ parameters.vmSize }}
   - name: vnetName
     value: iscala-archive-prod-vnet
   - name: subnetName
     value: default
   - name: nicName
     value: iscala-archive-prod-nic
+  - name: publicIpName
+    value: iscala-archive-prod-pip
   - name: vnetAddressPrefix
     value: 10.61.0.0/16
   - name: subnetPrefix
@@ -86,21 +102,38 @@ stages:
               inlineScript: |
                 $ErrorActionPreference = "Stop"
 
-                $rg           = "$(targetResourceGroup)"
-                $location     = "$(location)"
-                $vmName       = "$(vmName)"
-                $vmSize       = "$(vmSize)"
-                $vnetName     = "$(vnetName)"
-                $subnetName   = "$(subnetName)"
-                $nicName      = "$(nicName)"
-                $vnetPrefix   = "$(vnetAddressPrefix)"
-                $subnetPrefix = "$(subnetPrefix)"
+                $rg                = "$(targetResourceGroup)"
+                $location          = "$(location)"
+                $vmName            = "$(vmName)"
+                $vmSize            = "$(vmSizeVar)"
+                $vnetName          = "$(vnetName)"
+                $subnetName        = "$(subnetName)"
+                $nicName           = "$(nicName)"
+                $publicIpName      = "$(publicIpName)"
+                $vnetPrefix        = "$(vnetAddressPrefix)"
+                $subnetPrefix      = "$(subnetPrefix)"
+                $targetEnv         = "${{ parameters.targetEnv }}"
+                $createPublicIp    = "${{ parameters.createPublicIp }}".ToLower() -eq "true"
+                $allowPublicIpProd = "${{ parameters.allowPublicIpInProd }}".ToLower() -eq "true"
 
                 Write-Host "Resource group : $rg"
                 Write-Host "VM name        : $vmName"
                 Write-Host "Location       : $location"
+                Write-Host "VM size        : $vmSize"
 
-                # Find managed disks in the target RG
+                $usePublicIp = $false
+                if ($createPublicIp) {
+                  if ($targetEnv -eq "prod" -and -not $allowPublicIpProd) {
+                    throw "Public IP was requested for PROD, but allowPublicIpInProd is false."
+                  }
+                  $usePublicIp = $true
+                }
+
+                Write-Host "createPublicIp      : $createPublicIp"
+                Write-Host "allowPublicIpInProd : $allowPublicIpProd"
+                Write-Host "usePublicIp         : $usePublicIp"
+
+                # Find managed disks in RG
                 $diskRows = az disk list `
                   --resource-group $rg `
                   --query "[].[name,id]" `
@@ -119,26 +152,11 @@ stages:
                   $score = 0
                   $reasons = @()
 
-                  if ($name -match 'OSDisk') {
-                    $score += 150
-                    $reasons += "name contains OSDisk"
-                  }
-                  if ($name -match 'Cdisken') {
-                    $score += 120
-                    $reasons += "name contains Cdisken"
-                  }
-                  if ($name -match '^S-') {
-                    $score += 40
-                    $reasons += "name starts with S-"
-                  }
-                  if ($name -match 'DataDisk') {
-                    $score -= 100
-                    $reasons += "name contains DataDisk"
-                  }
-                  if ($name -match 'TEMP|TEMPDB|LOG|DATA') {
-                    $score -= 80
-                    $reasons += "name suggests temp/log/data disk"
-                  }
+                  if ($name -match 'OSDisk')   { $score += 150; $reasons += "name contains OSDisk" }
+                  if ($name -match 'Cdisken')  { $score += 120; $reasons += "name contains Cdisken" }
+                  if ($name -match '^S-')      { $score += 40;  $reasons += "name starts with S-" }
+                  if ($name -match 'DataDisk') { $score -= 100; $reasons += "name contains DataDisk" }
+                  if ($name -match 'TEMP|TEMPDB|LOG|DATA') { $score -= 80; $reasons += "name suggests temp/log/data disk" }
 
                   $report += [pscustomobject]@{
                     DiskName = $name
@@ -152,13 +170,11 @@ stages:
                 $report | Sort-Object Score -Descending | Format-Table -AutoSize | Out-String | Write-Host
 
                 $osDisk = $report | Sort-Object Score -Descending | Select-Object -First 1
-
                 if (-not $osDisk -or $osDisk.Score -lt 50) {
                   throw "OS disk detection confidence too low."
                 }
 
                 $dataDisks = $report | Where-Object { $_.DiskName -ne $osDisk.DiskName }
-
                 Write-Host "Chosen OS disk: $($osDisk.DiskName)"
 
                 # Create or reuse VNet
@@ -182,6 +198,28 @@ stages:
                   Write-Host "VNet already exists: $vnetName"
                 }
 
+                # Create or reuse Public IP if requested
+                if ($usePublicIp) {
+                  $pipExists = az network public-ip show `
+                    --resource-group $rg `
+                    --name $publicIpName `
+                    --query "name" -o tsv 2>$null
+
+                  if (-not $pipExists) {
+                    Write-Host "Creating Public IP: $publicIpName"
+                    az network public-ip create `
+                      --resource-group $rg `
+                      --location $location `
+                      --name $publicIpName `
+                      --sku Standard `
+                      --allocation-method Static `
+                      --only-show-errors | Out-Null
+                  }
+                  else {
+                    Write-Host "Public IP already exists: $publicIpName"
+                  }
+                }
+
                 # Create or reuse NIC
                 $nicExists = az network nic show `
                   --resource-group $rg `
@@ -190,13 +228,26 @@ stages:
 
                 if (-not $nicExists) {
                   Write-Host "Creating NIC: $nicName"
-                  az network nic create `
-                    --resource-group $rg `
-                    --location $location `
-                    --name $nicName `
-                    --vnet-name $vnetName `
-                    --subnet $subnetName `
-                    --only-show-errors | Out-Null
+
+                  if ($usePublicIp) {
+                    az network nic create `
+                      --resource-group $rg `
+                      --location $location `
+                      --name $nicName `
+                      --vnet-name $vnetName `
+                      --subnet $subnetName `
+                      --public-ip-address $publicIpName `
+                      --only-show-errors | Out-Null
+                  }
+                  else {
+                    az network nic create `
+                      --resource-group $rg `
+                      --location $location `
+                      --name $nicName `
+                      --vnet-name $vnetName `
+                      --subnet $subnetName `
+                      --only-show-errors | Out-Null
+                  }
                 }
                 else {
                   Write-Host "NIC already exists: $nicName"
@@ -225,9 +276,7 @@ stages:
                   throw "Could not read VM quota usage for region '$location'."
                 }
 
-                # Total regional cores
                 $totalRegional = $usage | Where-Object { $_.name.value -eq "cores" }
-
                 if (-not $totalRegional) {
                   throw "Could not find total regional vCPU quota in usage output."
                 }
@@ -242,18 +291,9 @@ stages:
                   throw "QuotaExceeded: Not enough regional vCPU quota in '$location'. Required=$requiredCores, available=$totalAvail."
                 }
 
-                # Family quota
-                # Example for Standard_D4s_v5 -> standardDSv5Family
                 $familyCode = $null
-
-                if ($vmSize -match '_v5$' -and $vmSize -match '^Standard_D\d+s_v5$') {
+                if ($vmSize -match '^Standard_D\d+s_v5$') {
                   $familyCode = "standardDSv5Family"
-                }
-                elseif ($vmSize -match '^Standard_D\d+as_v5$') {
-                  $familyCode = "standardDASv5Family"
-                }
-                elseif ($vmSize -match '^Standard_D\d+ads_v5$') {
-                  $familyCode = "standardDADSv5Family"
                 }
 
                 if ($familyCode) {
@@ -271,11 +311,8 @@ stages:
                     }
                   }
                   else {
-                    Write-Warning "Could not find family quota '$familyCode' in usage output. Continuing based on regional quota only."
+                    Write-Warning "Could not find family quota '$familyCode'. Continuing based on regional quota only."
                   }
-                }
-                else {
-                  Write-Warning "No family quota mapping implemented for VM size '$vmSize'. Continuing based on regional quota only."
                 }
 
                 # Create VM if missing
@@ -340,4 +377,27 @@ stages:
                   }
                 }
 
+                # Summary
+                $powerState = az vm get-instance-view `
+                  --resource-group $rg `
+                  --name $vmName `
+                  --query "instanceView.statuses[?starts_with(code, 'PowerState/')].displayStatus | [0]" `
+                  -o tsv 2>$null
+
+                $publicIp = ""
+                if ($usePublicIp) {
+                  $publicIp = az network public-ip show `
+                    --resource-group $rg `
+                    --name $publicIpName `
+                    --query "ipAddress" -o tsv 2>$null
+                }
+
+                Write-Host "==== VM SUMMARY ===="
+                Write-Host "VM name       : $vmName"
+                Write-Host "Resource group: $rg"
+                Write-Host "OS disk       : $($osDisk.DiskName)"
+                Write-Host "Data disks    : $($dataDisks.DiskName -join ', ')"
+                Write-Host "NIC           : $nicName"
+                Write-Host "Power state   : $powerState"
+                Write-Host "Public IP     : $publicIp"
                 Write-Host "VM pipeline complete."
