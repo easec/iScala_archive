@@ -262,6 +262,6 @@ stages:
                   else {
                     Write-Host "Disk already attached: $($disk.DiskName)"
                   }
-
+                }
 
                 Write-Host "VM pipeline complete."
