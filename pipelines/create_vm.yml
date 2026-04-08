@@ -253,6 +253,52 @@ stages:
                   Write-Host "NIC already exists: $nicName"
                 }
 
+                # Ensure NIC has the Public IP if requested
+                if ($usePublicIp) {
+                  $ipConfigName = az network nic show `
+                    --resource-group $rg `
+                    --name $nicName `
+                    --query "ipConfigurations[0].name" `
+                    -o tsv
+
+                  if (-not $ipConfigName) {
+                    throw "Could not determine IP configuration name for NIC '$nicName'."
+                  }
+
+                  $currentPipId = az network nic show `
+                    --resource-group $rg `
+                    --name $nicName `
+                    --query "ipConfigurations[0].publicIPAddress.id" `
+                    -o tsv 2>$null
+
+                  $desiredPipId = az network public-ip show `
+                    --resource-group $rg `
+                    --name $publicIpName `
+                    --query "id" `
+                    -o tsv
+
+                  if (-not $desiredPipId) {
+                    throw "Could not find Public IP '$publicIpName'."
+                  }
+
+                  if ($currentPipId -ne $desiredPipId) {
+                    Write-Host "Associating Public IP '$publicIpName' to NIC '$nicName' (IP config: $ipConfigName)"
+                    az network nic ip-config update `
+                      --resource-group $rg `
+                      --nic-name $nicName `
+                      --name $ipConfigName `
+                      --public-ip-address $publicIpName `
+                      --only-show-errors | Out-Null
+
+                    if ($LASTEXITCODE -ne 0) {
+                      throw "Failed to associate Public IP '$publicIpName' to NIC '$nicName'."
+                    }
+                  }
+                  else {
+                    Write-Host "Public IP already associated to NIC '$nicName'."
+                  }
+                }
+
                 # Quota pre-check
                 Write-Host "Checking quota for VM size: $vmSize in region: $location"
 
