@@ -45,9 +45,9 @@ variables:
   - name: connectionsParametersFile
     value: logicapp-consumption-eventgrid/infra/parameters/connections.dev.json
   - name: logicAppParametersFile
-    value: logicapp-consumption-eventgridinfra/parameters/logicapp.dev.json
+    value: logicapp-consumption-eventgrid/infra/parameters/logicapp.dev.json
   - name: functionAppParametersFile
-    value: logicapp-consumption-eventgridinfra/parameters/functionapp.dev.json
+    value: logicapp-consumption-eventgrid/infra/parameters/functionapp.dev.json
   - name: sourceStorageAccount
     value: snapshottestsa
   - name: sourceContainer
