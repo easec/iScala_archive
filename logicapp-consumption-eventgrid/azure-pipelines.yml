@@ -43,11 +43,11 @@ variables:
   - name: keyVaultName
     value: kv-iscala-archive-dev
   - name: connectionsParametersFile
-    value: infra/parameters/connections.dev.json
+    value: logicapp-consumption-eventgridinfra/parameters/connections.dev.json
   - name: logicAppParametersFile
-    value: infra/parameters/logicapp.dev.json
+    value: logicapp-consumption-eventgridinfra/parameters/logicapp.dev.json
   - name: functionAppParametersFile
-    value: infra/parameters/functionapp.dev.json
+    value: logicapp-consumption-eventgridinfra/parameters/functionapp.dev.json
   - name: sourceStorageAccount
     value: snapshottestsa
   - name: sourceContainer
