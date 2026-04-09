@@ -786,7 +786,7 @@ stages:
               deploymentScope: Resource Group
               resourceGroupName: $(resourceGroupName)
               location: $(rgLocation)
-              csmFile: infra/keyvault.json
+              csmFile: logicapp-consumption-eventgrid/infra/keyvault.json
               overrideParameters: >
                 -keyVaultName "$(keyVaultName)"
                 -location "$(rgLocation)"
