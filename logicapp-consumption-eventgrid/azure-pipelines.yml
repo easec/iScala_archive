@@ -289,7 +289,7 @@ stages:
         deploymentScope: Resource Group
         resourceGroupName: $(resourceGroupName)
         location: $(rgLocation)
-        csmFile: infra/keyvault.json
+        csmFile: logicapp-consumption-eventgrid/infra/keyvault.json
         overrideParameters: >
           -keyVaultName "$(keyVaultName)"
           -location "$(rgLocation)"
@@ -303,7 +303,7 @@ stages:
         deploymentScope: Resource Group
         resourceGroupName: $(resourceGroupName)
         location: $(rgLocation)
-        csmFile: infra/connections.json
+        csmFile: logicapp-consumption-eventgrid/infra/connections.json
         csmParametersFile: $(connectionsParametersFile)
         deploymentMode: Incremental
 
@@ -315,7 +315,7 @@ stages:
         deploymentScope: Resource Group
         resourceGroupName: $(resourceGroupName)
         location: $(rgLocation)
-        csmFile: logicapp/logicapp.json
+        csmFile: logicapp-consumption-eventgrid/logicapp/logicapp.json
         csmParametersFile: $(logicAppParametersFile)
         deploymentMode: Incremental
 
@@ -385,7 +385,7 @@ stages:
         deploymentScope: Resource Group
         resourceGroupName: $(resourceGroupName)
         location: $(rgLocation)
-        csmFile: infra/functionapp.json
+        csmFile: logicapp-consumption-eventgrid/infra/functionapp.json
         csmParametersFile: $(functionAppParametersFile)
         deploymentMode: Incremental
         deploymentOutputs: functionOutputs
@@ -575,7 +575,7 @@ stages:
         deploymentScope: Resource Group
         resourceGroupName: $(resourceGroupName)
         location: $(rgLocation)
-        csmFile: infra/deadletter-container.json
+        csmFile: logicapp-consumption-eventgrid/infra/deadletter-container.json
         overrideParameters: >
           -storageAccountName "$(deadLetterStorageAccountName)"
           -containerName "eventgrid-deadletter"
@@ -613,7 +613,7 @@ stages:
         deploymentScope: Resource Group
         resourceGroupName: $(sourceStorageResourceGroup)
         location: $(rgLocation)
-        csmFile: infra/eventgrid-subscription.json
+        csmFile: logicapp-consumption-eventgrid/infra/eventgrid-subscription.json
         overrideParameters: >
           -eventSubscriptionName "$(eventSubscriptionName)"
           -sourceResourceId "/subscriptions/$(subscriptionId)/resourceGroups/$(sourceStorageResourceGroup)/providers/Microsoft.Storage/storageAccounts/$(sourceStorageAccount)"
