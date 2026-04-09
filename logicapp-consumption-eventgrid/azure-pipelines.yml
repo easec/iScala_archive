@@ -132,16 +132,16 @@ stages:
     - bash: |
         set -e
         python3 -m json.tool logicapp-consumption-eventgrid/infra/functionapp.json > /dev/null
-        python3 -m json.tool infra/connections.json > /dev/null
-        python3 -m json.tool infra/workbook-forwarding.json > /dev/null
-        python3 -m json.tool infra/deadletter-container.json > /dev/null
-        python3 -m json.tool infra/eventgrid-subscription.json > /dev/null
-        python3 -m json.tool infra/keyvault.json > /dev/null
-        python3 -m json.tool logicapp/logicapp.json > /dev/null
-        python3 -m json.tool infra/parameters/logicapp.dev.json > /dev/null
-        python3 -m json.tool infra/parameters/logicapp.prod.json > /dev/null
-        python3 -m json.tool infra/parameters/functionapp.dev.json > /dev/null
-        python3 -m json.tool infra/parameters/functionapp.prod.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/connections.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/workbook-forwarding.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/deadletter-container.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/eventgrid-subscription.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/keyvault.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/logicapp/logicapp.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/parameters/logicapp.dev.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/parameters/logicapp.prod.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/parameters/functionapp.dev.json > /dev/null
+        python3 -m json.tool logicapp-consumption-eventgrid/infra/parameters/functionapp.prod.json > /dev/null
       displayName: Validate JSON templates
 
     - task: AzureCLI@2
