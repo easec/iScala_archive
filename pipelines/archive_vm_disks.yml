@@ -1,0 +1,232 @@
+trigger: none
+pr: none
+
+parameters:
+- name: vmName
+  type: string
+  default: easec-test
+
+- name: resourceGroup
+  type: string
+  default: rg-iscale-archive-resources
+
+- name: azureServiceConnection
+  type: string
+  default: Azure-Service-Connection-Sub
+
+- name: archiveStorageAccount
+  type: string
+  default: snapshottestsa
+
+- name: archiveContainer
+  type: string
+  default: iscala-archive
+
+- name: deallocateVmFirst
+  type: boolean
+  default: true
+
+- name: setArchiveTier
+  type: boolean
+  default: true
+
+stages:
+- stage: Archive
+  displayName: Archive VM disks to Blob Archive
+  jobs:
+  - job: ArchiveDisks
+    displayName: Export managed disks and archive them
+    pool:
+      name: easec-pool
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: Export VM disks to BlockBlob and archive
+      inputs:
+        azureSubscription: ${{ parameters.azureServiceConnection }}
+        scriptType: pscore
+        scriptLocation: inlineScript
+        inlineScript: |
+          $ErrorActionPreference = "Stop"
+
+          $vmName          = "${{ parameters.vmName }}"
+          $rg              = "${{ parameters.resourceGroup }}"
+          $storageAccount  = "${{ parameters.archiveStorageAccount }}"
+          $container       = "${{ parameters.archiveContainer }}"
+          $deallocateFirst = "${{ parameters.deallocateVmFirst }}".ToLower() -eq "true"
+          $setArchiveTier  = "${{ parameters.setArchiveTier }}".ToLower() -eq "true"
+
+          Write-Host "VM name         : $vmName"
+          Write-Host "Resource group  : $rg"
+          Write-Host "Storage account : $storageAccount"
+          Write-Host "Container       : $container"
+          Write-Host "Deallocate first: $deallocateFirst"
+          Write-Host "Set Archive tier: $setArchiveTier"
+
+          if (-not (Get-Command azcopy -ErrorAction SilentlyContinue)) {
+            throw "AzCopy is not installed or not available in PATH on this agent."
+          }
+
+          Write-Host "Ensuring archive container exists..."
+          az storage container create `
+            --account-name $storageAccount `
+            --name $container `
+            --auth-mode login `
+            --only-show-errors | Out-Null
+
+          if ($deallocateFirst) {
+            Write-Host "Deallocating VM '$vmName'..."
+            az vm deallocate `
+              --resource-group $rg `
+              --name $vmName `
+              --only-show-errors
+          }
+
+          Write-Host "Reading VM definition..."
+          $vm = az vm show `
+            --resource-group $rg `
+            --name $vmName `
+            -o json | ConvertFrom-Json
+
+          if (-not $vm) {
+            throw "Could not read VM '$vmName' in resource group '$rg'."
+          }
+
+          $disks = @()
+
+          # OS disk
+          if ($vm.storageProfile.osDisk -and $vm.storageProfile.osDisk.name) {
+            $disks += [pscustomobject]@{
+              Role = "os"
+              Name = $vm.storageProfile.osDisk.name
+              Lun  = $null
+            }
+          }
+
+          # Data disks
+          if ($vm.storageProfile.dataDisks) {
+            foreach ($disk in $vm.storageProfile.dataDisks) {
+              $disks += [pscustomobject]@{
+                Role = "data"
+                Name = $disk.name
+                Lun  = $disk.lun
+              }
+            }
+          }
+
+          if (-not $disks -or $disks.Count -eq 0) {
+            throw "No managed disks found for VM '$vmName'."
+          }
+
+          Write-Host "Disks discovered:"
+          foreach ($disk in $disks) {
+            if ($disk.Role -eq "os") {
+              Write-Host " - [OS]   $($disk.Name)"
+            }
+            else {
+              Write-Host " - [DATA] $($disk.Name) (LUN $($disk.Lun))"
+            }
+          }
+
+          $timestamp = Get-Date -Format "yyyyMMddHHmmss"
+          $expiry = (Get-Date).ToUniversalTime().AddHours(8).ToString("yyyy-MM-ddTHH:mmZ")
+
+          Write-Host "Generating destination SAS for archive container..."
+          $destSas = az storage container generate-sas `
+            --account-name $storageAccount `
+            --name $container `
+            --auth-mode login `
+            --as-user `
+            --permissions racwdl `
+            --expiry $expiry `
+            -o tsv
+
+          if (-not $destSas) {
+            throw "Failed to generate destination SAS for $storageAccount/$container."
+          }
+
+          $azcopyLogDir = "$(Agent.TempDirectory)/azcopy-logs"
+          New-Item -ItemType Directory -Force -Path $azcopyLogDir | Out-Null
+          $env:AZCOPY_LOG_LOCATION = $azcopyLogDir
+
+          foreach ($disk in $disks) {
+            Write-Host "----"
+            Write-Host "Processing disk: $($disk.Name)"
+
+            Write-Host "Granting temporary read access to managed disk..."
+            $diskAccess = az disk grant-access `
+              --resource-group $rg `
+              --name $disk.Name `
+              --access-level Read `
+              --duration-in-seconds 28800 `
+              -o json | ConvertFrom-Json
+
+            $srcUrl = $diskAccess.accessSAS
+            if (-not $srcUrl) {
+              throw "Failed to generate access SAS for disk '$($disk.Name)'."
+            }
+
+            if ($disk.Role -eq "os") {
+              $blobName = "$vmName-osdisk-$timestamp.bin"
+            }
+            else {
+              $blobName = "$vmName-datadisk$($disk.Lun)-$timestamp.bin"
+            }
+
+            $dstUrl = "https://$storageAccount.blob.core.windows.net/$container/$blobName`?$destSas"
+
+            Write-Host "Copying to BlockBlob: $blobName"
+            $azcopyOutput = azcopy copy $srcUrl $dstUrl --blob-type BlockBlob --overwrite=true 2>&1
+            $azcopyExitCode = $LASTEXITCODE
+            $azcopyOutput | ForEach-Object { Write-Host $_ }
+
+            Write-Host "Revoking temporary read access for disk '$($disk.Name)'..."
+            az disk revoke-access `
+              --resource-group $rg `
+              --name $disk.Name `
+              --only-show-errors | Out-Null
+
+            if ($azcopyExitCode -ne 0) {
+              $latestLog = Get-ChildItem -Path $azcopyLogDir -Filter *.log -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
+
+              if ($latestLog) {
+                Write-Host "Latest AzCopy log: $($latestLog.FullName)"
+                Get-Content $latestLog.FullName -Tail 100 | Write-Host
+              }
+
+              throw "AzCopy failed for managed disk '$($disk.Name)' with exit code $azcopyExitCode"
+            }
+
+            Write-Host "Validating destination blob type..."
+            $blobType = az storage blob show `
+              --account-name $storageAccount `
+              --container-name $container `
+              --name $blobName `
+              --auth-mode login `
+              --query "properties.blobType" `
+              -o tsv
+
+            Write-Host "$blobName => $blobType"
+
+            if ($blobType -ne "BlockBlob") {
+              throw "Blob '$blobName' is not a BlockBlob."
+            }
+
+            if ($setArchiveTier) {
+              Write-Host "Setting blob tier to Archive..."
+              az storage blob set-tier `
+                --account-name $storageAccount `
+                --container-name $container `
+                --name $blobName `
+                --tier Archive `
+                --auth-mode login `
+                --only-show-errors
+            }
+
+            Write-Host "Archived successfully: $blobName"
+          }
+
+          Write-Host "All managed disks archived successfully."
