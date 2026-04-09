@@ -642,7 +642,7 @@ stages:
               python3 -m json.tool logicapp-consumption-eventgrid/infra/functionapp.json > /dev/null
               python3 -m json.tool logicapp-consumption-eventgrid/infra/connections.json > /dev/null
               python3 -m json.tool logicapp-consumption-eventgrid/infra/workbook-forwarding.json > /dev/null
-              python3 -m json.tool infra/deadletter-container.json > /dev/null
+              python3 -m json.tool logicapp-consumption-eventgrid/infra/deadletter-container.json > /dev/null
               python3 -m json.tool logicapp-consumption-eventgrid/infra/eventgrid-subscription.json > /dev/null
               python3 -m json.tool logicapp-consumption-eventgrid/infra/keyvault.json > /dev/null
               python3 -m json.tool logicapp-consumption-eventgrid/logicapp/logicapp.json > /dev/null
