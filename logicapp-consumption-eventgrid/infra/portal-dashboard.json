@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "dashboardName": { "type": "string" },
+    "location": { "type": "string" },
+    "workbookResourceId": { "type": "string" }
+  },
+  "variables": {
+    "workbookPortalUrl": "[concat('https://portal.azure.com/#blade/Microsoft_Azure_Monitoring/WorkbookBlade/resourceId/', uriComponent(parameters('workbookResourceId')))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Portal/dashboards",
+      "apiVersion": "2020-09-01-preview",
+      "name": "[parameters('dashboardName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "lenses": [
+          {
+            "order": 0,
+            "parts": [
+              {
+                "position": { "x": 0, "y": 0, "rowSpan": 6, "colSpan": 16 },
+                "metadata": {
+                  "type": "Extension/Microsoft_Portal/PartType/MarkdownPart",
+                  "settings": {
+                    "content": {
+                      "settings": {
+                        "content": "[concat('# Forwarding dashboard\\n\\nThis dashboard uses a workbook for the detailed charts.\\n\\n- **Open workbook:** ', variables('workbookPortalUrl'), '\\n\\n(If you want tiles directly on the dashboard, pin them from the workbook UI.)')]"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": { "model": { "timeRange": { "value": "24h" } } }
+      }
+    }
+  ]
+}

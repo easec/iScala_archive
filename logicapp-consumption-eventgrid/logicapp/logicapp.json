@@ -1,0 +1,364 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName": { "type": "string" },
+    "location": { "type": "string" },
+    "$connections": { "type": "object" },
+    "emailTo": { "type": "string" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": {
+              "type": "Object",
+              "defaultValue": {}
+            },
+            "emailTo": {
+              "type": "String",
+              "defaultValue": ""
+            }
+          },
+          "triggers": {
+            "When_HTTP_is_called": {
+              "type": "Request",
+              "kind": "Http",
+              "inputs": {
+                "schema": {}
+              }
+            }
+          },
+          "actions": {
+            "NormalizedEvent": {
+              "type": "Compose",
+              "runAfter": {},
+              "inputs": "@coalesce(triggerBody()?[0], triggerBody())"
+            },
+            "Route_by_EventType": {
+              "type": "Switch",
+              "runAfter": {
+                "NormalizedEvent": [ "Succeeded" ]
+              },
+              "expression": "@coalesce(outputs('NormalizedEvent')?['eventType'], '')",
+              "cases": {
+                "SubscriptionValidation": {
+                  "case": "Microsoft.EventGrid.SubscriptionValidationEvent",
+                  "actions": {
+                    "Return_Validation_Code": {
+                      "type": "Response",
+                      "runAfter": {},
+                      "inputs": {
+                        "statusCode": 200,
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "validationResponse": "@coalesce(outputs('NormalizedEvent')?['data']?['validationCode'], '')"
+                        }
+                      }
+                    }
+                  }
+                },
+                "BlobCreated": {
+                  "case": "Microsoft.Storage.BlobCreated",
+                  "actions": {
+                    "Validate_Storage_Fields_BlobCreated": {
+                      "type": "If",
+                      "runAfter": {},
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@coalesce(outputs('NormalizedEvent')?['subject'], '')",
+                                ""
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@coalesce(outputs('NormalizedEvent')?['data']?['url'], '')",
+                                ""
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "actions": {},
+                      "else": {
+                        "actions": {
+                          "Return_Bad_Request_MissingFields_BlobCreated": {
+                            "type": "Response",
+                            "runAfter": {},
+                            "inputs": {
+                              "statusCode": 400,
+                              "headers": {
+                                "Content-Type": "application/json"
+                              },
+                              "body": {
+                                "received": false,
+                                "error": "Invalid Storage event payload (missing required fields)",
+                                "required": [ "subject", "data.url" ],
+                                "got": {
+                                  "subject": "@coalesce(outputs('NormalizedEvent')?['subject'], '')",
+                                  "url": "@coalesce(outputs('NormalizedEvent')?['data']?['url'], '')"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "Is_Hot_Tier_And_Not_Preflight_BlobCreated": {
+                      "type": "If",
+                      "runAfter": {
+                        "Validate_Storage_Fields_BlobCreated": [ "Succeeded" ]
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@coalesce(outputs('NormalizedEvent')?['data']?['accessTier'], '')",
+                              "Hot"
+                            ]
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@toLower(string(coalesce(outputs('NormalizedEvent')?['data']?['isPreflight'], 'false')))",
+                                "true"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "actions": {
+                        "Send_an_email_(V2)_BlobCreated": {
+                          "type": "ApiConnection",
+                          "runAfter": {},
+                          "inputs": {
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['office365']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/v2/Mail",
+                            "body": {
+                              "To": "@parameters('emailTo')",
+                              "Subject": "[C:QUITEC] [BlobCreated] [ASSIGNEDTO:CD - CD - Operations Västerås [ispublic=0] - [BlobCreated] Rehydration process finished",
+                              "Body": "<p><strong>Rehydration process finished.</strong></p><p><strong>Blob:</strong> @{outputs('NormalizedEvent')?['subject']}</p><p><strong>Current tier:</strong> @{outputs('NormalizedEvent')?['data']?['accessTier']}</p><p><strong>URL:</strong> @{outputs('NormalizedEvent')?['data']?['url']}</p><p>Ready for the next step. This message is only a test!</p>",
+                              "Importance": "Normal"
+                            }
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      }
+                    },
+                    "Return_OK_BlobCreated": {
+                      "type": "Response",
+                      "runAfter": {
+                        "Is_Hot_Tier_And_Not_Preflight_BlobCreated": [ "Succeeded", "Skipped", "Failed", "TimedOut" ]
+                      },
+                      "inputs": {
+                        "statusCode": 200,
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "received": true,
+                          "eventType": "@coalesce(outputs('NormalizedEvent')?['eventType'], '')",
+                          "accessTier": "@coalesce(outputs('NormalizedEvent')?['data']?['accessTier'], '')",
+                          "isPreflight": "@coalesce(outputs('NormalizedEvent')?['data']?['isPreflight'], false)"
+                        }
+                      }
+                    }
+                  }
+                },
+                "BlobTierChanged": {
+                  "case": "Microsoft.Storage.BlobTierChanged",
+                  "actions": {
+                    "Validate_Storage_Fields_BlobTierChanged": {
+                      "type": "If",
+                      "runAfter": {},
+                      "expression": {
+                        "and": [
+                          {
+                            "not": {
+                              "equals": [
+                                "@coalesce(outputs('NormalizedEvent')?['subject'], '')",
+                                ""
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@coalesce(outputs('NormalizedEvent')?['data']?['accessTier'], '')",
+                                ""
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@coalesce(outputs('NormalizedEvent')?['data']?['url'], '')",
+                                ""
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "actions": {},
+                      "else": {
+                        "actions": {
+                          "Return_Bad_Request_MissingFields_BlobTierChanged": {
+                            "type": "Response",
+                            "runAfter": {},
+                            "inputs": {
+                              "statusCode": 400,
+                              "headers": {
+                                "Content-Type": "application/json"
+                              },
+                              "body": {
+                                "received": false,
+                                "error": "Invalid Storage event payload (missing required fields)",
+                                "required": [ "subject", "data.accessTier", "data.url" ],
+                                "got": {
+                                  "subject": "@coalesce(outputs('NormalizedEvent')?['subject'], '')",
+                                  "accessTier": "@coalesce(outputs('NormalizedEvent')?['data']?['accessTier'], '')",
+                                  "url": "@coalesce(outputs('NormalizedEvent')?['data']?['url'], '')"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "Is_Hot_Tier_And_Not_Preflight_BlobTierChanged": {
+                      "type": "If",
+                      "runAfter": {
+                        "Validate_Storage_Fields_BlobTierChanged": [ "Succeeded" ]
+                      },
+                      "expression": {
+                        "and": [
+                          {
+                            "equals": [
+                              "@coalesce(outputs('NormalizedEvent')?['data']?['accessTier'], '')",
+                              "Hot"
+                            ]
+                          },
+                          {
+                            "not": {
+                              "equals": [
+                                "@toLower(string(coalesce(outputs('NormalizedEvent')?['data']?['isPreflight'], 'false')))",
+                                "true"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "actions": {
+                        "Send_an_email_(V2)_BlobTierChanged": {
+                          "type": "ApiConnection",
+                          "runAfter": {},
+                          "inputs": {
+                            "host": {
+                              "connection": {
+                                "name": "@parameters('$connections')['office365']['connectionId']"
+                              }
+                            },
+                            "method": "post",
+                            "path": "/v2/Mail",
+                            "body": {
+                              "To": "@parameters('emailTo')",
+                              "Subject": "[C:QUITEC] [BlobTierChanged] [ASSIGNEDTO:CD - CD - Operations Västerås [ispublic=0] - [BlobTierChanged] Rehydration process finishedRehydration process finished",
+                              "Body": "<p><strong>Rehydration process finished.</strong></p><p><strong>Blob:</strong> @{outputs('NormalizedEvent')?['subject']}</p><p><strong>Previous tier:</strong> @{outputs('NormalizedEvent')?['data']?['previousTier']}</p><p><strong>Current tier:</strong> @{outputs('NormalizedEvent')?['data']?['accessTier']}</p><p><strong>URL:</strong> @{outputs('NormalizedEvent')?['data']?['url']}</p><p>Ready for the next step. This message is only a test!</p>",
+                              "Importance": "Normal"
+                            }
+                          }
+                        }
+                      },
+                      "else": {
+                        "actions": {}
+                      }
+                    },
+                    "Return_OK_BlobTierChanged": {
+                      "type": "Response",
+                      "runAfter": {
+                        "Is_Hot_Tier_And_Not_Preflight_BlobTierChanged": [ "Succeeded", "Skipped", "Failed", "TimedOut" ]
+                      },
+                      "inputs": {
+                        "statusCode": 200,
+                        "headers": {
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "received": true,
+                          "eventType": "@coalesce(outputs('NormalizedEvent')?['eventType'], '')",
+                          "accessTier": "@coalesce(outputs('NormalizedEvent')?['data']?['accessTier'], '')",
+                          "isPreflight": "@coalesce(outputs('NormalizedEvent')?['data']?['isPreflight'], false)"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "default": {
+                "actions": {
+                  "Return_Bad_Request_InvalidEventType": {
+                    "type": "Response",
+                    "runAfter": {},
+                    "inputs": {
+                      "statusCode": 400,
+                      "headers": {
+                        "Content-Type": "application/json"
+                      },
+                      "body": {
+                        "received": false,
+                        "error": "Invalid eventType (not allowed)",
+                        "allowedEventTypes": [
+                          "Microsoft.EventGrid.SubscriptionValidationEvent",
+                          "Microsoft.Storage.BlobCreated",
+                          "Microsoft.Storage.BlobTierChanged"
+                        ],
+                        "gotEventType": "@coalesce(outputs('NormalizedEvent')?['eventType'], '')"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": "[parameters('$connections')]"
+          },
+          "emailTo": {
+            "value": "[parameters('emailTo')]"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "callbackUrl": {
+      "type": "string",
+      "value": "[listCallbackUrl(resourceId('Microsoft.Logic/workflows/triggers', parameters('logicAppName'), 'When_HTTP_is_called'), '2019-05-01').value]"
+    }
+  }
+}

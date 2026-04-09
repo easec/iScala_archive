@@ -1,0 +1,391 @@
+trigger:
+- main
+
+variables:
+- group: variable_iScalaArchive
+
+- name: azureServiceConnection
+  value: 'Azure-Service-Connection'
+
+- name: functionAppName
+  value: 'fa-iscala-eg-proxy-dev'
+
+- name: eventSubscriptionName
+  value: 'iscala-archive-egsub'
+
+- name: storageAccountResourceId
+  value: "/subscriptions/0ac447d7-fbc3-4d3d-84d4-37bb9a71e089/resourceGroups/$(resourceGroupName)/providers/Microsoft.Storage/storageAccounts/$(storageAccount)"
+
+stages:
+- stage: Dev
+  displayName: Deploy Dev
+  jobs:
+  - job: Deploy
+    pool:
+      name: easec-pool
+    steps:
+    - checkout: self
+
+    # Validate JSON templates (fast fail)
+    - bash: |
+        set -e
+        python3 -m json.tool infra/functionapp.json > /dev/null
+        python3 -m json.tool infra/connections.json > /dev/null
+        python3 -m json.tool logicapp/logicapp.json > /dev/null
+        python3 -m json.tool infra/workbook-forwarding.json > /dev/null
+      displayName: Validate JSON templates
+
+    # Deploy API connections (Office 365 etc.)
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: Deploy Connections
+      inputs:
+        azureResourceManagerConnection: $(azureServiceConnection)
+        deploymentScope: Resource Group
+        resourceGroupName: $(resourceGroupName)
+        location: $(rgLocation)
+        csmFile: infra/connections.json
+        csmParametersFile: infra/parameters/connections.dev.json
+        deploymentMode: Incremental
+
+    # Deploy Logic App (HTTP trigger + email)
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: Deploy Logic App
+      inputs:
+        azureResourceManagerConnection: $(azureServiceConnection)
+        deploymentScope: Resource Group
+        resourceGroupName: $(resourceGroupName)
+        location: $(rgLocation)
+        csmFile: logicapp/logicapp.json
+        csmParametersFile: infra/parameters/logicapp.dev.json
+        deploymentMode: Incremental
+
+    # Deploy Function App infra (storage + plan + app + settings)
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: Deploy Function infra
+      inputs:
+        azureResourceManagerConnection: $(azureServiceConnection)
+        deploymentScope: Resource Group
+        resourceGroupName: $(resourceGroupName)
+        location: $(rgLocation)
+        csmFile: infra/functionapp.json
+        csmParametersFile: infra/parameters/functionapp.dev.json
+        # logicAppCallbackUrl will be set after we fetch it (next step),
+        # but we still deploy infra now. If your template requires it,
+        # keep a placeholder in the parameter file and override later.
+        deploymentMode: Incremental
+        deploymentOutputs: functionOutputs
+
+    - task: AzureCLI@2
+      displayName: Precheck can service connection create role assignments at RG scope?
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+
+          RG="$(resourceGroupName)"
+          SUB="$(az account show --query id -o tsv)"
+          SCOPE="/subscriptions/$SUB/resourceGroups/$RG"
+
+          echo "Checking roleAssignments/write permission at scope: $SCOPE"
+
+          PRINCIPAL_TYPE="$(az account show --query user.type -o tsv)"
+          PRINCIPAL_NAME="$(az account show --query user.name -o tsv)"
+          echo "Logged in as type=$PRINCIPAL_TYPE name=$PRINCIPAL_NAME"
+
+          SP_OBJECT_ID=""
+          if [ "$PRINCIPAL_TYPE" = "servicePrincipal" ]; then
+            SP_OBJECT_ID="$(az ad sp show --id "$PRINCIPAL_NAME" --query id -o tsv 2>/dev/null || true)"
+          fi
+
+          if [ -z "$SP_OBJECT_ID" ] || [ "$SP_OBJECT_ID" = "null" ]; then
+            echo "Skipping create/delete precheck because SP objectId could not be resolved (directory read permissions)."
+            echo "If RBAC fails, grant Owner or User Access Administrator to the service connection at:"
+            echo "  $SCOPE"
+            exit 0
+          fi
+
+          echo "Service connection SP objectId: $SP_OBJECT_ID"
+
+          # Use uuidgen (available on most linux agents). Fallback to /proc random if missing.
+          if command -v uuidgen >/dev/null 2>&1; then
+            TEST_NAME="$(uuidgen)"
+          else
+            TEST_NAME="$(cat /proc/sys/kernel/random/uuid)"
+          fi
+
+          echo "Attempting a harmless role assignment create+delete (Reader) to validate permissions..."
+          set +e
+          az role assignment create \
+            --name "$TEST_NAME" \
+            --assignee-object-id "$SP_OBJECT_ID" \
+            --assignee-principal-type ServicePrincipal \
+            --role "Reader" \
+            --scope "$SCOPE" \
+            -o none
+          RC=$?
+          set -e
+
+          if [ $RC -ne 0 ]; then
+            echo ""
+            echo "ERROR: Service connection cannot create role assignments at:"
+            echo "  $SCOPE"
+            echo ""
+            echo "Fix: grant this identity one of:"
+            echo "  - Owner"
+            echo "  - User Access Administrator"
+            echo ""
+            echo "Service connection SP objectId: $SP_OBJECT_ID"
+            exit 1
+          fi
+
+          az role assignment delete --name "$TEST_NAME" --scope "$SCOPE" -o none || true
+          echo "OK: roleAssignments/write is allowed at $SCOPE"
+
+
+
+    - task: AzureCLI@2
+      displayName: RBAC Grant Function MI access at RG scope
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+
+          RG="$(resourceGroupName)"
+          FUNC="$(functionAppName)"
+          SUB="$(az account show --query id -o tsv)"
+          SCOPE="/subscriptions/$SUB/resourceGroups/$RG"
+
+          echo "RG: $RG"
+          echo "Function: $FUNC"
+          echo "Scope: $SCOPE"
+
+          echo "Fetching Function managed identity principalId..."
+          MI_PRINCIPAL_ID="$(az functionapp identity show -g "$RG" -n "$FUNC" --query principalId -o tsv)"
+
+          if [ -z "$MI_PRINCIPAL_ID" ] || [ "$MI_PRINCIPAL_ID" = "null" ]; then
+            echo "ERROR: Function App has no system-assigned identity (principalId empty)."
+            echo "Ensure your Function ARM has:  identity: { \"type\": \"SystemAssigned\" }"
+            exit 1
+          fi
+
+          echo "MI principalId: $MI_PRINCIPAL_ID"
+
+          # Roles at RG scope (choose minimum)
+          ROLES=(
+            "Storage Blob Data Contributor"
+            # "Reader"   # optional
+          )
+
+          for ROLE in "${ROLES[@]}"; do
+            echo "Assigning role: $ROLE"
+            az role assignment create \
+              --assignee-object-id "$MI_PRINCIPAL_ID" \
+              --assignee-principal-type ServicePrincipal \
+              --role "$ROLE" \
+              --scope "$SCOPE" \
+              -o none || true
+          done
+
+          echo "Assignments for MI at RG scope:"
+          az role assignment list \
+            --assignee-object-id "$MI_PRINCIPAL_ID" \
+            --scope "$SCOPE" \
+            --query "[].{role:roleDefinitionName, scope:scope}" -o table || true
+
+
+    # Set Function webhook URL output from ARM
+    - script: |
+        echo "Function webhook URL: $(functionOutputs.functionWebhookUrl.value)"
+        echo "##vso[task.setvariable variable=functionWebhookUrl]$(functionOutputs.functionWebhookUrl.value)"
+        echo "App Insights name (from template): $(functionOutputs.appInsightsName.value)"
+        echo "##vso[task.setvariable variable=appInsightsName]$(functionOutputs.appInsightsName.value)"
+      displayName: Set Function outputs variables
+
+    # Fetch Logic App callback URL (includes sig) and set on Function as appsetting
+    - task: AzureCLI@2
+      displayName: Fetch Logic App callback URL -> set Function appsetting
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+
+          RG="$(resourceGroupName)"
+          LA="$(logicAppName)"
+          TRIGGER="$(triggerName)"
+          FUNC="$(functionAppName)"
+          SUB="$(az account show --query id -o tsv)"
+
+          echo "Fetching callback URL for $LA / $TRIGGER in RG $RG (SUB $SUB)"
+
+          CALLBACK="$(az rest --method POST \
+            --uri "https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Logic/workflows/$LA/triggers/$TRIGGER/listCallbackUrl?api-version=2019-05-01" \
+            --body '{}' \
+            --query "value" -o tsv)"
+
+          if [ -z "$CALLBACK" ] || [ "$CALLBACK" = "null" ]; then
+            echo "ERROR: Could not retrieve callback URL."
+            exit 1
+          fi
+
+          echo "Callback URL (sig redacted):"
+          echo "$CALLBACK" | sed -E 's/(sig=)[^&]+/\1REDACTED/g'
+
+          echo "Setting LOGICAPP_CALLBACK_URL on Function App $FUNC"
+          az functionapp config appsettings set \
+            -g "$RG" -n "$FUNC" \
+            --settings "LOGICAPP_CALLBACK_URL=$CALLBACK" \
+            -o none
+
+          echo "Restarting Function App to pick up settings..."
+          az functionapp restart -g "$RG" -n "$FUNC"
+
+          echo "Verifying appsetting exists (value redacted):"
+          az functionapp config appsettings list -g "$RG" -n "$FUNC" \
+            --query "[?name=='LOGICAPP_CALLBACK_URL'].value | [0]" -o tsv \
+            | sed -E 's/(sig=)[^&]+/\1REDACTED/g'
+
+          echo "##vso[task.setvariable variable=logicAppCallbackUrl]$CALLBACK"
+
+    # Zip Function code
+    - task: ArchiveFiles@2
+      displayName: Zip Function code
+      inputs:
+        rootFolderOrFile: functionapp
+        includeRootFolder: false
+        archiveType: zip
+        archiveFile: $(Build.ArtifactStagingDirectory)/functionapp.zip
+        replaceExistingArchive: true
+
+    # Optional: Inspect zip contents (uses python, no zip binary dependency)
+    - bash: |
+        set -e
+        echo "Listing contents of functionapp.zip"
+        python3 - << 'PY'
+        import zipfile
+        z = zipfile.ZipFile("$(Build.ArtifactStagingDirectory)/functionapp.zip")
+        for name in z.namelist():
+            print(name)
+        PY
+      displayName: Inspect function zip contents
+
+    # Deploy Function package (more reliable than AzureFunctionApp@2 ZIP Deploy)
+    - task: AzureCLI@2
+      displayName: Deploy Function package (config-zip)
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+          RG="$(resourceGroupName)"
+          FUNC="$(functionAppName)"
+          ZIP="$(Build.ArtifactStagingDirectory)/functionapp.zip"
+
+          echo "Deploying ZIP to Function App: $FUNC (RG: $RG)"
+          az functionapp deployment source config-zip \
+            -g "$RG" -n "$FUNC" \
+            --src "$ZIP" \
+            -o none
+
+          echo "Restarting Function App..."
+          az functionapp restart -g "$RG" -n "$FUNC" -o none
+
+
+    # Pre-flight check: validate Function + forwarding (tags preflight to avoid email)
+    - task: AzureCLI@2
+      displayName: Pre-flight check (Function + Forwarding)
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+
+          FUNC_URL="$(functionWebhookUrl)"
+          echo "Function endpoint: $FUNC_URL"
+
+          echo "== 1) Validate Function endpoint =="
+          resp="$(curl -sS -i -X POST "$FUNC_URL" -H "Content-Type: application/json" \
+            -d '[{"eventType":"Microsoft.EventGrid.SubscriptionValidationEvent","data":{"validationCode":"abc123"}}]')"
+          echo "$resp" | grep -q "HTTP/1.1 200"
+          echo "$resp" | grep -q '"validationResponse"'
+
+          echo "== 2) Blob Hot event test (preflight tagged; Logic App ignores email) =="
+          payload='[{
+            "topic":"'"$(storageAccountResourceId)"'",
+            "subject":"/blobServices/default/containers/snapshot/blobs/devops-preflight.txt",
+            "eventType":"Microsoft.Storage.BlobTierChanged",
+            "id":"preflight",
+            "data":{
+              "accessTier":"Hot",
+              "previousTier":"Cool",
+              "isPreflight":true,
+              "url":"https://'"$(storageAccount)"'.blob.core.windows.net/snapshot/devops-preflight.txt"
+            },
+            "metadataVersion":"1",
+            "eventTime":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"
+          }]'
+
+          resp2="$(curl -sS -X POST "$FUNC_URL" -H "Content-Type: application/json" -d "$payload")"
+
+          echo "== Blob test response body =="
+          echo "$resp2"
+
+          ok="$(printf '%s' "$resp2" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(str(d.get("ok", False)).lower())' 2>/dev/null || echo false)"
+          if [ "$ok" != "true" ]; then
+            echo "ERROR: Missing ok=true"
+            echo "$resp2"
+            exit 1
+          fi
+
+          echo "OK: Pre-flight passed."
+
+
+    # Create/Update Event Grid subscription -> Function
+    - task: AzureCLI@2
+      displayName: Create Event Grid subscription (to Function)
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+
+          echo "Using endpoint: $(functionWebhookUrl)"
+          echo "Storage scope: $(storageAccountResourceId)"
+
+          az eventgrid event-subscription delete \
+            --name "$(eventSubscriptionName)" \
+            --source-resource-id "$(storageAccountResourceId)" || true
+
+          az eventgrid event-subscription create \
+            --name "$(eventSubscriptionName)" \
+            --source-resource-id "$(storageAccountResourceId)" \
+            --endpoint "$(functionWebhookUrl)" \
+            --included-event-types Microsoft.Storage.BlobCreated Microsoft.Storage.BlobTierChanged
+
+          az eventgrid event-subscription show \
+            --name "$(eventSubscriptionName)" \
+            --source-resource-id "$(storageAccountResourceId)" \
+            --query "{state:provisioningState, endpoint:destination.endpointBaseUrl}" -o json
+
+    # Workbook (Forwarding panel)
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: Deploy Workbook (forwarding panel)
+      inputs:
+        azureResourceManagerConnection: $(azureServiceConnection)
+        deploymentScope: Resource Group
+        resourceGroupName: $(resourceGroupName)
+        location: $(rgLocation)
+        csmFile: infra/workbook-forwarding.json
+        overrideParameters: >
+          -workbookName "7f3e2f8a-9d8a-4e5e-b5b8-3a4b9b8f7d21"
+          -location "$(rgLocation)"
+          -appInsightsResourceId "/subscriptions/0ac447d7-fbc3-4d3d-84d4-37bb9a71e089/resourceGroups/$(resourceGroupName)/providers/Microsoft.Insights/components/$(appInsightsName)"
+        deploymentMode: Incremental

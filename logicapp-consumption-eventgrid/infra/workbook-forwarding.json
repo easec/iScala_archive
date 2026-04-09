@@ -1,0 +1,31 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workbookName": { "type": "string" },
+    "location": { "type": "string" },
+    "appInsightsResourceId": { "type": "string" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Insights/workbooks",
+      "apiVersion": "2022-04-01",
+      "name": "[parameters('workbookName')]",
+      "location": "[parameters('location')]",
+      "kind": "shared",
+      "properties": {
+        "displayName": "Forwarding health (Function → Logic App)",
+        "sourceId": "[parameters('appInsightsResourceId')]",
+        "serializedData": "{\n  \"version\": \"Notebook/1.0\",\n  \"items\": [\n    {\n      \"type\": 9,\n      \"name\": \"Parameters\",\n      \"content\": {\n        \"version\": \"KqlParameterItem/1.0\",\n        \"query\": \"\",\n        \"style\": \"pills\",\n        \"parameters\": [\n          {\n            \"id\": \"timerange\",\n            \"version\": \"KqlParameterItem/1.0\",\n            \"name\": \"TimeRange\",\n            \"type\": 4,\n            \"isRequired\": true,\n            \"value\": { \"durationMs\": 1800000 },\n            \"typeSettings\": {\n              \"selectableValues\": [\n                { \"durationMs\": 1800000, \"label\": \"Last 30 minutes\" },\n                { \"durationMs\": 7200000, \"label\": \"Last 2 hours\" },\n                { \"durationMs\": 86400000, \"label\": \"Last 24 hours\" }\n              ],\n              \"allowCustom\": true\n            }\n          }\n        ]\n      }\n    },\n\n    {\n      \"type\": 1,\n      \"name\": \"Title\",\n      \"content\": {\n        \"json\": \"## Forwarding health ({TimeRange:label})\\nTracks forwarding successes and failures from the EventGrid proxy Function to the Logic App.\"\n      }\n    },\n\n    {\n      \"type\": 3,\n      \"name\": \"Timechart\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"title\": \"Success / Failure over time\",\n        \"query\": \"let forward = traces\\n| where timestamp {TimeRange}\\n| where message contains \\\"Forwarded to Logic App. Status:\\\"\\n| extend status = toint(extract(@\\\"Status:\\\\\\\\s*(\\\\\\\\d+)\\\", 1, message))\\n| extend outcome = iff(status in (200, 202), \\\"Success\\\", \\\"Failure\\\");\\nforward\\n| make-series Success=countif(outcome==\\\"Success\\\") default=0, Failure=countif(outcome==\\\"Failure\\\") default=0 on timestamp from {TimeRange:start} to {TimeRange:end} step {TimeRange:grain}\",\n        \"visualization\": \"linechart\",\n        \"timeContext\": { \"durationMs\": 0 },\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"resourceType\": \"microsoft.insights/components\",\n        \"resources\": [\n          \"[parameters('appInsightsResourceId')]\"\n        ]\n      }\n    },\n\n    {\n      \"type\": 3,\n      \"name\": \"SuccessCount\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"title\": \"Forward successes ({TimeRange:label})\",\n        \"query\": \"traces\\n| where timestamp {TimeRange}\\n| where message contains \\\"Forwarded to Logic App. Status: 200\\\" or message contains \\\"Forwarded to Logic App. Status: 202\\\"\\n| summarize Success=count()\",\n        \"visualization\": \"stat\",\n        \"timeContext\": { \"durationMs\": 0 },\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"resourceType\": \"microsoft.insights/components\",\n        \"resources\": [\n          \"[parameters('appInsightsResourceId')]\"\n        ]\n      }\n    },\n\n    {\n      \"type\": 3,\n      \"name\": \"FailureCount\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"title\": \"Forward failures ({TimeRange:label})\",\n        \"query\": \"traces\\n| where timestamp {TimeRange}\\n| where message contains \\\"Forwarded to Logic App. Status:\\\"\\n| extend status = toint(extract(@\\\"Status:\\\\\\\\s*(\\\\\\\\d+)\\\", 1, message))\\n| where status !in (200, 202)\\n| summarize Failures=count()\",\n        \"visualization\": \"stat\",\n        \"timeContext\": { \"durationMs\": 0 },\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"resourceType\": \"microsoft.insights/components\",\n        \"resources\": [\n          \"[parameters('appInsightsResourceId')]\"\n        ]\n      }\n    },\n\n    {\n      \"type\": 3,\n      \"name\": \"RecentFailures\",\n      \"content\": {\n        \"version\": \"KqlItem/1.0\",\n        \"title\": \"Recent forwarding failures ({TimeRange:label})\",\n        \"query\": \"traces\\n| where timestamp {TimeRange}\\n| where message contains \\\"Forwarded to Logic App. Status:\\\"\\n| extend status = toint(extract(@\\\"Status:\\\\\\\\s*(\\\\\\\\d+)\\\", 1, message))\\n| where status !in (200, 202)\\n| project timestamp, status, message\\n| order by timestamp desc\",\n        \"visualization\": \"table\",\n        \"timeContext\": { \"durationMs\": 0 },\n        \"timeContextFromParameter\": \"TimeRange\",\n        \"resourceType\": \"microsoft.insights/components\",\n        \"resources\": [\n          \"[parameters('appInsightsResourceId')]\"\n        ]\n      }\n    }\n  ],\n  \"isLocked\": false\n}"
+      }
+    }
+  ],
+  "outputs": {
+    "workbookResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Insights/workbooks', parameters('workbookName'))]"
+    }
+  }
+}
+
+
