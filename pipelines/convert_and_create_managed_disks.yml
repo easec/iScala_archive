@@ -58,13 +58,27 @@ stages:
       - checkout: self
 
       - task: AzureCLI@2
-        displayName: Copy Block blobs to target account as PageBlob VHDs
+        displayName: Copy Block blobs to target account as stable PageBlob VHDs
         inputs:
           azureSubscription: ${{ parameters.azureServiceConnection }}
           scriptType: pscore
           scriptLocation: inlineScript
           inlineScript: |
             $ErrorActionPreference = "Stop"
+
+            function Get-DestinationBlobName {
+              param([string]$SourceBlobName)
+
+              if ($SourceBlobName -match '^(.*)-osdisk-\d{14}\.(bin|BIN|vhd|VHD)$') {
+                return "$($matches[1])-osdisk.vhd"
+              }
+              elseif ($SourceBlobName -match '^(.*)-datadisk(\d+)-\d{14}\.(bin|BIN|vhd|VHD)$') {
+                return "$($matches[1])-datadisk$($matches[2]).vhd"
+              }
+              else {
+                return ($SourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd')
+              }
+            }
 
             $srcAccount   = "$(rehydratedSourceStorageAccount)"
             $srcContainer = "$(rehydratedSourceContainer)"
@@ -77,14 +91,12 @@ stages:
             Write-Host "targetStorageAccount = $dstAccount"
             Write-Host "targetContainer      = $dstContainer"
 
-            Write-Host "Ensuring destination container exists..."
             az storage container create `
               --account-name $dstAccount `
               --name $dstContainer `
               --auth-mode login `
               --only-show-errors | Out-Null
 
-            Write-Host "Discovering archived Block blobs in source container..."
             $blobRows = az storage blob list `
               --account-name $srcAccount `
               --container-name $srcContainer `
@@ -114,10 +126,6 @@ stages:
               --expiry $expiry `
               -o tsv
 
-            if (-not $srcSas) {
-              throw "Failed to generate SAS for source container."
-            }
-
             $dstSas = az storage container generate-sas `
               --account-name $dstAccount `
               --name $dstContainer `
@@ -127,9 +135,8 @@ stages:
               --expiry $expiry `
               -o tsv
 
-            if (-not $dstSas) {
-              throw "Failed to generate SAS for destination container."
-            }
+            if (-not $srcSas) { throw "Failed to generate SAS for source container." }
+            if (-not $dstSas) { throw "Failed to generate SAS for destination container." }
 
             $azcopyLogDir = "$(Agent.TempDirectory)/azcopy-logs"
             New-Item -ItemType Directory -Force -Path $azcopyLogDir | Out-Null
@@ -137,7 +144,7 @@ stages:
 
             foreach ($row in $blobRows) {
               $sourceBlobName = $row[0]
-              $destBlobName = $sourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd'
+              $destBlobName = Get-DestinationBlobName -SourceBlobName $sourceBlobName
 
               $srcUrl = "https://$srcAccount.blob.core.windows.net/$srcContainer/$sourceBlobName`?$srcSas"
               $dstUrl = "https://$dstAccount.blob.core.windows.net/$dstContainer/$destBlobName`?$dstSas"
@@ -161,10 +168,9 @@ stages:
               }
             }
 
-            Write-Host "Validating destination blob types..."
             foreach ($row in $blobRows) {
               $sourceBlobName = $row[0]
-              $blobName = $sourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd'
+              $blobName = Get-DestinationBlobName -SourceBlobName $sourceBlobName
 
               $blobType = az storage blob show `
                 --account-name $dstAccount `
@@ -217,12 +223,12 @@ stages:
               $score = 0
               $reasons = @()
 
-              if ($name -match '(?i)OSDisk') {
+              if ($name -match '(?i)osdisk') {
                 $score += 150
                 $reasons += "name contains osdisk"
               }
 
-              if ($name -match '(?i)Cdisken') {
+              if ($name -match '(?i)cdisken') {
                 $score += 120
                 $reasons += "name contains cdisken"
               }
@@ -232,7 +238,7 @@ stages:
                 $reasons += "name starts with S_"
               }
 
-              if ($name -match '(?i)DataDisk') {
+              if ($name -match '(?i)datadisk') {
                 $score -= 100
                 $reasons += "name contains datadisk"
               }
@@ -317,13 +323,27 @@ stages:
             - checkout: self
 
             - task: AzureCLI@2
-              displayName: Copy Block blobs to target account as PageBlob VHDs
+              displayName: Copy Block blobs to target account as stable PageBlob VHDs
               inputs:
                 azureSubscription: ${{ parameters.azureServiceConnection }}
                 scriptType: pscore
                 scriptLocation: inlineScript
                 inlineScript: |
                   $ErrorActionPreference = "Stop"
+
+                  function Get-DestinationBlobName {
+                    param([string]$SourceBlobName)
+
+                    if ($SourceBlobName -match '^(.*)-osdisk-\d{14}\.(bin|BIN|vhd|VHD)$') {
+                      return "$($matches[1])-osdisk.vhd"
+                    }
+                    elseif ($SourceBlobName -match '^(.*)-datadisk(\d+)-\d{14}\.(bin|BIN|vhd|VHD)$') {
+                      return "$($matches[1])-datadisk$($matches[2]).vhd"
+                    }
+                    else {
+                      return ($SourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd')
+                    }
+                  }
 
                   $srcAccount   = "$(rehydratedSourceStorageAccount)"
                   $srcContainer = "$(rehydratedSourceContainer)"
@@ -336,7 +356,6 @@ stages:
                   Write-Host "targetStorageAccount = $dstAccount"
                   Write-Host "targetContainer      = $dstContainer"
 
-                  Write-Host "Ensuring destination container exists..."
                   az storage container create `
                     --account-name $dstAccount `
                     --name $dstContainer `
@@ -372,10 +391,6 @@ stages:
                     --expiry $expiry `
                     -o tsv
 
-                  if (-not $srcSas) {
-                    throw "Failed to generate SAS for source container."
-                  }
-
                   $dstSas = az storage container generate-sas `
                     --account-name $dstAccount `
                     --name $dstContainer `
@@ -385,9 +400,8 @@ stages:
                     --expiry $expiry `
                     -o tsv
 
-                  if (-not $dstSas) {
-                    throw "Failed to generate SAS for destination container."
-                  }
+                  if (-not $srcSas) { throw "Failed to generate SAS for source container." }
+                  if (-not $dstSas) { throw "Failed to generate SAS for destination container." }
 
                   $azcopyLogDir = "$(Agent.TempDirectory)/azcopy-logs"
                   New-Item -ItemType Directory -Force -Path $azcopyLogDir | Out-Null
@@ -395,7 +409,7 @@ stages:
 
                   foreach ($row in $blobRows) {
                     $sourceBlobName = $row[0]
-                    $destBlobName = $sourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd'
+                    $destBlobName = Get-DestinationBlobName -SourceBlobName $sourceBlobName
 
                     $srcUrl = "https://$srcAccount.blob.core.windows.net/$srcContainer/$sourceBlobName`?$srcSas"
                     $dstUrl = "https://$dstAccount.blob.core.windows.net/$dstContainer/$destBlobName`?$dstSas"
@@ -419,10 +433,9 @@ stages:
                     }
                   }
 
-                  Write-Host "Validating destination blob types..."
                   foreach ($row in $blobRows) {
                     $sourceBlobName = $row[0]
-                    $blobName = $sourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd'
+                    $blobName = Get-DestinationBlobName -SourceBlobName $sourceBlobName
 
                     $blobType = az storage blob show `
                       --account-name $dstAccount `
@@ -431,8 +444,6 @@ stages:
                       --auth-mode login `
                       --query "properties.blobType" `
                       -o tsv
-
-                    Write-Host "$blobName => $blobType"
 
                     if ($blobType -ne "PageBlob") {
                       throw "Blob '$blobName' is not a PageBlob in destination."
@@ -474,10 +485,10 @@ stages:
                     $score = 0
                     $reasons = @()
 
-                    if ($name -match '(?i)OSDisk') { $score += 150; $reasons += "name contains osdisk" }
-                    if ($name -match '(?i)Cdisken') { $score += 120; $reasons += "name contains cdisken" }
+                    if ($name -match '(?i)osdisk') { $score += 150; $reasons += "name contains osdisk" }
+                    if ($name -match '(?i)cdisken') { $score += 120; $reasons += "name contains cdisken" }
                     if ($name -match '^S_') { $score += 40; $reasons += "name starts with S_" }
-                    if ($name -match '(?i)DataDisk') { $score -= 100; $reasons += "name contains datadisk" }
+                    if ($name -match '(?i)datadisk') { $score -= 100; $reasons += "name contains datadisk" }
                     if ($name -match '(?i)TEMP|TEMPDB|LOG|DATA') { $score -= 80; $reasons += "name suggests temp/log/data disk" }
 
                     $diskName = ($name -replace '\.VHD$|\.vhd$','') `
