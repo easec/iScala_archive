@@ -513,7 +513,7 @@ stages:
     - task: ArchiveFiles@2
       displayName: Zip Function code
       inputs:
-        rootFolderOrFile: functionapp
+        rootFolderOrFile: logicapp-consumption-eventgrid/functionapp
         includeRootFolder: false
         archiveType: zip
         archiveFile: $(Build.ArtifactStagingDirectory)/functionapp.zip
@@ -1016,7 +1016,7 @@ stages:
           - task: ArchiveFiles@2
             displayName: Zip Function code
             inputs:
-              rootFolderOrFile: functionapp
+              rootFolderOrFile: logicapp-consumption-eventgrid/functionapp
               includeRootFolder: false
               archiveType: zip
               archiveFile: $(Build.ArtifactStagingDirectory)/functionapp.zip
