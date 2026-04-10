@@ -69,14 +69,25 @@ stages:
             function Get-DestinationBlobName {
               param([string]$SourceBlobName)
 
-              if ($SourceBlobName -match '^(.*)-osdisk-\d{14}\.(bin|BIN|vhd|VHD)$') {
-                return "$($matches[1])-osdisk.vhd"
-              }
-              elseif ($SourceBlobName -match '^(.*)-datadisk(\d+)-\d{14}\.(bin|BIN|vhd|VHD)$') {
-                return "$($matches[1])-datadisk$($matches[2]).vhd"
-              }
-              else {
-                return ($SourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd')
+              $baseName = [System.IO.Path]::GetFileNameWithoutExtension($SourceBlobName)
+
+              switch -Regex ($baseName) {
+                '(?i)^S_Cdisken$'       { return 'sqlvm-osdisk.vhd' }
+                '(?i)^H_SQLVMTEMPDB$'   { return 'sqlvm-tempdb.vhd' }
+                '(?i)^V_SQLVMLOG$'      { return 'sqlvm-log.vhd' }
+                '(?i)^X_SQLVMLDATA1$'   { return 'sqlvm-data1.vhd' }
+
+                '^(.*)-osdisk-\d{14}$' {
+                  return "$($matches[1])-osdisk.vhd"
+                }
+
+                '^(.*)-datadisk(\d+)-\d{14}$' {
+                  return "$($matches[1])-datadisk$($matches[2]).vhd"
+                }
+
+                default {
+                  return ($SourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd')
+                }
               }
             }
 
@@ -198,6 +209,24 @@ stages:
           inlineScript: |
             $ErrorActionPreference = "Stop"
 
+            function Get-ManagedDiskName {
+              param([string]$BlobName)
+
+              switch -Regex ($BlobName) {
+                '(?i)^sqlvm-osdisk\.vhd$'  { return 'sqlvm-osdisk' }
+                '(?i)^sqlvm-tempdb\.vhd$'  { return 'sqlvm-tempdb' }
+                '(?i)^sqlvm-log\.vhd$'     { return 'sqlvm-log' }
+                '(?i)^sqlvm-data1\.vhd$'   { return 'sqlvm-data1' }
+
+                default {
+                  return (($BlobName -replace '\.VHD$|\.vhd$','') `
+                    -replace '[^A-Za-z0-9-]', '-' `
+                    -replace '-+', '-' `
+                    -replace '^-|-$','')
+                }
+              }
+            }
+
             $account   = "$(targetStorageAccount)"
             $container = "$(targetContainer)"
             $rg        = "$(targetResourceGroup)"
@@ -223,35 +252,62 @@ stages:
               $score = 0
               $reasons = @()
 
-              if ($name -match '(?i)osdisk') {
-                $score += 150
-                $reasons += "name contains osdisk"
+              if ($name -match '(?i)^sqlvm-osdisk\.vhd$') {
+                $score += 400
+                $reasons += "explicit mapped os disk"
               }
 
-              if ($name -match '(?i)cdisken') {
-                $score += 120
+              if ($name -match '(?i)Cdisken') {
+                $score += 300
                 $reasons += "name contains cdisken"
               }
 
               if ($name -match '^S_') {
-                $score += 40
+                $score += 120
                 $reasons += "name starts with S_"
               }
 
-              if ($name -match '(?i)datadisk') {
+              if ($name -match '(?i)OSDisk') {
+                $score += 150
+                $reasons += "name contains osdisk"
+              }
+
+              if ($name -match '(?i)^sqlvm-tempdb\.vhd$') {
+                $score -= 250
+                $reasons += "explicit mapped tempdb disk"
+              }
+
+              if ($name -match '(?i)^sqlvm-log\.vhd$') {
+                $score -= 220
+                $reasons += "explicit mapped log disk"
+              }
+
+              if ($name -match '(?i)^sqlvm-data1\.vhd$') {
+                $score -= 200
+                $reasons += "explicit mapped data disk"
+              }
+
+              if ($name -match '(?i)TEMPDB') {
+                $score -= 200
+                $reasons += "name contains tempdb"
+              }
+
+              if ($name -match '(?i)SQLVMLOG|LOG') {
+                $score -= 180
+                $reasons += "name contains log"
+              }
+
+              if ($name -match '(?i)LDATA|DATA') {
+                $score -= 150
+                $reasons += "name contains data"
+              }
+
+              if ($name -match '(?i)DataDisk') {
                 $score -= 100
                 $reasons += "name contains datadisk"
               }
 
-              if ($name -match '(?i)TEMP|TEMPDB|LOG|DATA') {
-                $score -= 80
-                $reasons += "name suggests temp/log/data disk"
-              }
-
-              $diskName = ($name -replace '\.VHD$|\.vhd$','') `
-                          -replace '[^A-Za-z0-9-]', '-' `
-                          -replace '-+', '-' `
-                          -replace '^-|-$',''
+              $diskName = Get-ManagedDiskName -BlobName $name
 
               $report += [pscustomobject]@{
                 BlobName = $name
@@ -334,14 +390,25 @@ stages:
                   function Get-DestinationBlobName {
                     param([string]$SourceBlobName)
 
-                    if ($SourceBlobName -match '^(.*)-osdisk-\d{14}\.(bin|BIN|vhd|VHD)$') {
-                      return "$($matches[1])-osdisk.vhd"
-                    }
-                    elseif ($SourceBlobName -match '^(.*)-datadisk(\d+)-\d{14}\.(bin|BIN|vhd|VHD)$') {
-                      return "$($matches[1])-datadisk$($matches[2]).vhd"
-                    }
-                    else {
-                      return ($SourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd')
+                    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($SourceBlobName)
+
+                    switch -Regex ($baseName) {
+                      '(?i)^S_Cdisken$'       { return 'sqlvm-osdisk.vhd' }
+                      '(?i)^H_SQLVMTEMPDB$'   { return 'sqlvm-tempdb.vhd' }
+                      '(?i)^V_SQLVMLOG$'      { return 'sqlvm-log.vhd' }
+                      '(?i)^X_SQLVMLDATA1$'   { return 'sqlvm-data1.vhd' }
+
+                      '^(.*)-osdisk-\d{14}$' {
+                        return "$($matches[1])-osdisk.vhd"
+                      }
+
+                      '^(.*)-datadisk(\d+)-\d{14}$' {
+                        return "$($matches[1])-datadisk$($matches[2]).vhd"
+                      }
+
+                      default {
+                        return ($SourceBlobName -replace '\.BIN$|\.bin$|\.VHD$|\.vhd$', '.vhd')
+                      }
                     }
                   }
 
@@ -445,6 +512,8 @@ stages:
                       --query "properties.blobType" `
                       -o tsv
 
+                    Write-Host "$blobName => $blobType"
+
                     if ($blobType -ne "PageBlob") {
                       throw "Blob '$blobName' is not a PageBlob in destination."
                     }
@@ -460,6 +529,24 @@ stages:
                 scriptLocation: inlineScript
                 inlineScript: |
                   $ErrorActionPreference = "Stop"
+
+                  function Get-ManagedDiskName {
+                    param([string]$BlobName)
+
+                    switch -Regex ($BlobName) {
+                      '(?i)^sqlvm-osdisk\.vhd$'  { return 'sqlvm-osdisk' }
+                      '(?i)^sqlvm-tempdb\.vhd$'  { return 'sqlvm-tempdb' }
+                      '(?i)^sqlvm-log\.vhd$'     { return 'sqlvm-log' }
+                      '(?i)^sqlvm-data1\.vhd$'   { return 'sqlvm-data1' }
+
+                      default {
+                        return (($BlobName -replace '\.VHD$|\.vhd$','') `
+                          -replace '[^A-Za-z0-9-]', '-' `
+                          -replace '-+', '-' `
+                          -replace '^-|-$','')
+                      }
+                    }
+                  }
 
                   $account   = "$(targetStorageAccount)"
                   $container = "$(targetContainer)"
@@ -485,16 +572,21 @@ stages:
                     $score = 0
                     $reasons = @()
 
-                    if ($name -match '(?i)osdisk') { $score += 150; $reasons += "name contains osdisk" }
-                    if ($name -match '(?i)cdisken') { $score += 120; $reasons += "name contains cdisken" }
-                    if ($name -match '^S_') { $score += 40; $reasons += "name starts with S_" }
-                    if ($name -match '(?i)datadisk') { $score -= 100; $reasons += "name contains datadisk" }
-                    if ($name -match '(?i)TEMP|TEMPDB|LOG|DATA') { $score -= 80; $reasons += "name suggests temp/log/data disk" }
+                    if ($name -match '(?i)^sqlvm-osdisk\.vhd$') { $score += 400; $reasons += "explicit mapped os disk" }
+                    if ($name -match '(?i)Cdisken') { $score += 300; $reasons += "name contains cdisken" }
+                    if ($name -match '^S_') { $score += 120; $reasons += "name starts with S_" }
+                    if ($name -match '(?i)OSDisk') { $score += 150; $reasons += "name contains osdisk" }
 
-                    $diskName = ($name -replace '\.VHD$|\.vhd$','') `
-                                -replace '[^A-Za-z0-9-]', '-' `
-                                -replace '-+', '-' `
-                                -replace '^-|-$',''
+                    if ($name -match '(?i)^sqlvm-tempdb\.vhd$') { $score -= 250; $reasons += "explicit mapped tempdb disk" }
+                    if ($name -match '(?i)^sqlvm-log\.vhd$') { $score -= 220; $reasons += "explicit mapped log disk" }
+                    if ($name -match '(?i)^sqlvm-data1\.vhd$') { $score -= 200; $reasons += "explicit mapped data disk" }
+
+                    if ($name -match '(?i)TEMPDB') { $score -= 200; $reasons += "name contains tempdb" }
+                    if ($name -match '(?i)SQLVMLOG|LOG') { $score -= 180; $reasons += "name contains log" }
+                    if ($name -match '(?i)LDATA|DATA') { $score -= 150; $reasons += "name contains data" }
+                    if ($name -match '(?i)DataDisk') { $score -= 100; $reasons += "name contains datadisk" }
+
+                    $diskName = Get-ManagedDiskName -BlobName $name
 
                     $report += [pscustomobject]@{
                       BlobName = $name
