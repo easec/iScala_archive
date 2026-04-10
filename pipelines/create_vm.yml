@@ -19,6 +19,10 @@ parameters:
   displayName: VM name
   type: string
 
+- name: diskPrefix
+  displayName: Restored disk prefix
+  type: string
+
 - name: vmSize
   displayName: VM size
   type: string
@@ -106,6 +110,7 @@ stages:
                 $rg                = "$(targetResourceGroup)"
                 $location          = "$(location)"
                 $vmName            = "${{ parameters.vmName }}".Trim()
+                $diskPrefix        = "${{ parameters.diskPrefix }}".Trim()
                 $vmSize            = "${{ parameters.vmSize }}"
                 $vnetName          = "$(vnetName)"
                 $subnetName        = "$(subnetName)"
@@ -130,8 +135,22 @@ stages:
                   throw "Parameter 'vmName' may only contain letters, numbers, and hyphens."
                 }
 
+                # Validate diskPrefix
+                if ([string]::IsNullOrWhiteSpace($diskPrefix)) {
+                  throw "Parameter 'diskPrefix' is mandatory and cannot be empty."
+                }
+
+                if ($diskPrefix.Length -gt 64) {
+                  throw "Parameter 'diskPrefix' is too long. Keep it at 64 characters or less."
+                }
+
+                if ($diskPrefix -notmatch '^[A-Za-z0-9-]+$') {
+                  throw "Parameter 'diskPrefix' may only contain letters, numbers, and hyphens."
+                }
+
                 Write-Host "Resource group : $rg"
                 Write-Host "VM name        : $vmName"
+                Write-Host "Disk prefix    : $diskPrefix"
                 Write-Host "Location       : $location"
                 Write-Host "VM size        : $vmSize"
 
@@ -163,10 +182,14 @@ stages:
                 }
 
                 # Expected stable disk names from restore pipeline
-                $expectedOsDisk = "sqlvm-osdisk"
-                $expectedTempDb = "sqlvm-tempdb"
-                $expectedData1  = "sqlvm-data1"
-                $expectedLog    = "sqlvm-log"
+                $expectedOsDisk = "$diskPrefix-osdisk"
+                $expectedTempDb = "$diskPrefix-tempdb"
+                $expectedData1  = "$diskPrefix-data1"
+                $expectedLog    = "$diskPrefix-log"
+
+                # fallback for simple restore sets
+                $altDataDisk0   = "$diskPrefix-datadisk0"
+                $altDataDisk1   = "$diskPrefix-datadisk1"
 
                 if (-not $diskMap.ContainsKey($expectedOsDisk)) {
                   throw "Expected OS disk '$expectedOsDisk' was not found in resource group '$rg'."
@@ -175,9 +198,20 @@ stages:
                 $osDiskId = $diskMap[$expectedOsDisk]
 
                 $dataDiskOrder = @()
+
+                # Preferred SQL layout
                 if ($diskMap.ContainsKey($expectedTempDb)) { $dataDiskOrder += $expectedTempDb }
                 if ($diskMap.ContainsKey($expectedData1))  { $dataDiskOrder += $expectedData1 }
                 if ($diskMap.ContainsKey($expectedLog))    { $dataDiskOrder += $expectedLog }
+
+                # Fallback for simple restore sets like easec-test-datadisk0
+                if ($dataDiskOrder.Count -eq 0 -and $diskMap.ContainsKey($altDataDisk0)) {
+                  $dataDiskOrder += $altDataDisk0
+                }
+
+                if ($dataDiskOrder.Count -eq 0 -and $diskMap.ContainsKey($altDataDisk1)) {
+                  $dataDiskOrder += $altDataDisk1
+                }
 
                 Write-Host "OS disk: $expectedOsDisk"
                 Write-Host "Data disk attach order:"
@@ -425,6 +459,7 @@ stages:
 
                 Write-Host "==== VM SUMMARY ===="
                 Write-Host "VM name       : $vmName"
+                Write-Host "Disk prefix   : $diskPrefix"
                 Write-Host "Resource group: $rg"
                 Write-Host "OS disk       : $expectedOsDisk"
                 Write-Host "Data disks    : $($dataDiskOrder -join ', ')"
