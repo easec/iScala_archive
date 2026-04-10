@@ -1076,7 +1076,7 @@ stages:
               deploymentScope: Resource Group
               resourceGroupName: $(resourceGroupName)
               location: $(rgLocation)
-              csmFile: infra/deadletter-container.json
+              csmFile: logicapp-consumption-eventgrid/infra/deadletter-container.json
               overrideParameters: >
                 -storageAccountName "$(deadLetterStorageAccountName)"
                 -containerName "eventgrid-deadletter"
