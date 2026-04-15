@@ -1,7 +1,7 @@
 trigger: none
 pr: none
 
-name: create-env-$(Date:yyyyMMdd)$(Rev:.r)
+name: iscala_create-env-$(Date:yyyyMMdd)$(Rev:.r)
 
 parameters:
 - name: targetEnv
