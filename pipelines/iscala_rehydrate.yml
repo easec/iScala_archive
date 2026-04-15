@@ -1,0 +1,264 @@
+trigger: none
+pr: none
+
+name: rehydrate-$(Date:yyyyMMdd)$(Rev:.r)
+
+resources:
+  pipelines:
+  - pipeline: logicapp
+    source: iscala-create-logicapp
+    trigger: true
+
+parameters:
+- name: targetEnv
+  type: string
+  default: dev
+  values:
+  - dev
+  - prod
+
+- name: azureServiceConnection
+  type: string
+  default: Azure-Service-Connection-Sub
+
+variables:
+# DEV
+- ${{ if eq(parameters.targetEnv, 'dev') }}:
+  - group: variable_iScalaArchive
+  - name: storageAccount
+    value: snapshottestsa
+  - name: sourceContainer
+    value: iscala-archive
+  - name: containerName
+    value: snapshot
+
+# PROD
+- ${{ if eq(parameters.targetEnv, 'prod') }}:
+  - group: variable_iScalaArchive
+  - name: storageAccount
+    value: snapshottestsa
+  - name: sourceContainer
+    value: iscala-archive
+  - name: containerName
+    value: snapshot
+
+- name: deploymentPrincipalObjectId
+  value: 94f97b9f-b688-4f99-a3ff-64e0e8a945d8
+
+- name: storageAccountResourceId
+  value: /subscriptions/$(subscriptionId)/resourceGroups/$(resourceGroupName)/providers/Microsoft.Storage/storageAccounts/$(storageAccount)
+
+stages:
+- stage: Rehydrate
+  displayName: Rehydrate ${{ parameters.targetEnv }}
+  jobs:
+
+  - ${{ if eq(parameters.targetEnv, 'dev') }}:
+    - job: RehydrateDev
+      displayName: Rehydrate DEV
+      pool:
+        name: easec-pool
+      steps:
+      - checkout: self
+
+      - task: AzureCLI@2
+        displayName: Rehydrate archived blobs to shared snapshot container
+        inputs:
+          azureSubscription: ${{ parameters.azureServiceConnection }}
+          scriptType: pscore
+          scriptLocation: inlineScript
+          inlineScript: |
+            $ErrorActionPreference = "Stop"
+
+            $account      = "$(storageAccount)"
+            $srcContainer = "$(sourceContainer)"
+            $dstContainer = "$(containerName)"
+
+            Write-Host "Source account       : $account"
+            Write-Host "Source container     : $srcContainer"
+            Write-Host "Destination container: $dstContainer"
+
+            Write-Host "Ensuring destination container exists..."
+            az storage container create `
+              --account-name $account `
+              --name $dstContainer `
+              --auth-mode login `
+              --only-show-errors | Out-Null
+
+            Write-Host "Listing blobs in source container: $srcContainer"
+            $blobs = az storage blob list `
+              --account-name $account `
+              --container-name $srcContainer `
+              --auth-mode login `
+              --query "[].name" -o tsv
+
+            if (-not $blobs) {
+              throw "No blobs found in source container '$srcContainer'."
+            }
+
+            foreach ($blob in $blobs) {
+              Write-Host "----"
+              Write-Host "Blob: $blob"
+
+              $tier = az storage blob show `
+                --account-name $account `
+                --container-name $srcContainer `
+                --name $blob `
+                --auth-mode login `
+                --query "properties.blobTier" -o tsv
+
+              Write-Host "Source tier: $tier"
+
+              $destExists = az storage blob exists `
+                --account-name $account `
+                --container-name $dstContainer `
+                --name $blob `
+                --auth-mode login `
+                --query "exists" -o tsv
+
+              if ($destExists -eq "true") {
+                Write-Host "Destination blob already exists. Deleting existing blob only: $blob"
+                az storage blob delete `
+                  --account-name $account `
+                  --container-name $dstContainer `
+                  --name $blob `
+                  --auth-mode login `
+                  --only-show-errors | Out-Null
+              }
+
+              if ($tier -eq "Archive") {
+                Write-Host "Archive -> starting copy with rehydrate to Hot (Standard)"
+                az storage blob copy start `
+                  --account-name $account `
+                  --auth-mode login `
+                  --source-container $srcContainer `
+                  --source-blob $blob `
+                  --destination-container $dstContainer `
+                  --destination-blob $blob `
+                  --tier hot `
+                  --rehydrate-priority standard `
+                  --only-show-errors | Out-Null
+              }
+              else {
+                Write-Host "Not Archive -> starting normal copy to Hot"
+                az storage blob copy start `
+                  --account-name $account `
+                  --auth-mode login `
+                  --source-container $srcContainer `
+                  --source-blob $blob `
+                  --destination-container $dstContainer `
+                  --destination-blob $blob `
+                  --tier hot `
+                  --only-show-errors | Out-Null
+              }
+            }
+
+            Write-Host "All copy operations started."
+            Write-Host "Shared container '$dstContainer' was reused and not deleted."
+
+  - ${{ if eq(parameters.targetEnv, 'prod') }}:
+    - deployment: RehydrateProd
+      displayName: Rehydrate PROD (requires approval)
+      environment: iscala-archive-prod
+      pool:
+        name: easec-pool
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+
+            - task: AzureCLI@2
+              displayName: Rehydrate archived blobs to shared snapshot container
+              inputs:
+                azureSubscription: ${{ parameters.azureServiceConnection }}
+                scriptType: pscore
+                scriptLocation: inlineScript
+                inlineScript: |
+                  $ErrorActionPreference = "Stop"
+
+                  $account      = "$(storageAccount)"
+                  $srcContainer = "$(sourceContainer)"
+                  $dstContainer = "$(containerName)"
+
+                  Write-Host "Source account       : $account"
+                  Write-Host "Source container     : $srcContainer"
+                  Write-Host "Destination container: $dstContainer"
+
+                  Write-Host "Ensuring destination container exists..."
+                  az storage container create `
+                    --account-name $account `
+                    --name $dstContainer `
+                    --auth-mode login `
+                    --only-show-errors | Out-Null
+
+                  Write-Host "Listing blobs in source container: $srcContainer"
+                  $blobs = az storage blob list `
+                    --account-name $account `
+                    --container-name $srcContainer `
+                    --auth-mode login `
+                    --query "[].name" -o tsv
+
+                  if (-not $blobs) {
+                    throw "No blobs found in source container '$srcContainer'."
+                  }
+
+                  foreach ($blob in $blobs) {
+                    Write-Host "----"
+                    Write-Host "Blob: $blob"
+
+                    $tier = az storage blob show `
+                      --account-name $account `
+                      --container-name $srcContainer `
+                      --name $blob `
+                      --auth-mode login `
+                      --query "properties.blobTier" -o tsv
+
+                    Write-Host "Source tier: $tier"
+
+                    $destExists = az storage blob exists `
+                      --account-name $account `
+                      --container-name $dstContainer `
+                      --name $blob `
+                      --auth-mode login `
+                      --query "exists" -o tsv
+
+                    if ($destExists -eq "true") {
+                      Write-Host "Destination blob already exists. Deleting existing blob only: $blob"
+                      az storage blob delete `
+                        --account-name $account `
+                        --container-name $dstContainer `
+                        --name $blob `
+                        --auth-mode login `
+                        --only-show-errors | Out-Null
+                    }
+
+                    if ($tier -eq "Archive") {
+                      Write-Host "Archive -> starting copy with rehydrate to Hot (Standard)"
+                      az storage blob copy start `
+                        --account-name $account `
+                        --auth-mode login `
+                        --source-container $srcContainer `
+                        --source-blob $blob `
+                        --destination-container $dstContainer `
+                        --destination-blob $blob `
+                        --tier hot `
+                        --rehydrate-priority standard `
+                        --only-show-errors | Out-Null
+                    }
+                    else {
+                      Write-Host "Not Archive -> starting normal copy to Hot"
+                      az storage blob copy start `
+                        --account-name $account `
+                        --auth-mode login `
+                        --source-container $srcContainer `
+                        --source-blob $blob `
+                        --destination-container $dstContainer `
+                        --destination-blob $blob `
+                        --tier hot `
+                        --only-show-errors | Out-Null
+                    }
+                  }
+
+                  Write-Host "All copy operations started."
+                  Write-Host "Shared container '$dstContainer' was reused and not deleted."
