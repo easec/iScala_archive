@@ -1,6 +1,14 @@
 trigger: none
 pr: none
 
+name: iscala_create-logicapp-$(Date:yyyyMMdd)$(Rev:.r)
+
+resources:
+  pipelines:
+  - pipeline: createenv
+    source: isscala-create-env
+    trigger: true
+
 parameters:
 - name: targetEnv
   type: string
