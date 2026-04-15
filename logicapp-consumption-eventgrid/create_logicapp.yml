@@ -1,7 +1,7 @@
 trigger: none
 pr: none
 
-name: create-logicapp-$(Date:yyyyMMdd)$(Rev:.r)
+name: create-logic-app-$(Date:yyyyMMdd)$(Rev:.r)
 
 resources:
   pipelines:
