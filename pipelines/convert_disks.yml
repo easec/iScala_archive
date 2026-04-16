@@ -1,3 +1,4 @@
+Write-Host "DEBUG MARKER: convert_disks.yml UPDATED V2 $(Get-Date)"
 trigger: none
 pr: none
 
