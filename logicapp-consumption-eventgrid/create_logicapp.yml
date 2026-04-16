@@ -6,7 +6,7 @@ name: create-logic-app-$(Date:yyyyMMdd)$(Rev:.r)
 resources:
   pipelines:
   - pipeline: createenv
-    source: isscala-create-env
+    source: iscala-create-env
     trigger: true
 
 parameters:
