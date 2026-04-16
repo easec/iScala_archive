@@ -1,6 +1,8 @@
 trigger: none
 pr: none
 
+name: convert-disks-$(Date:yyyyMMdd)$(Rev:.r)
+
 parameters:
 - name: targetEnv
   type: string
