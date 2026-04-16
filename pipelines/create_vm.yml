@@ -6,7 +6,7 @@ name: create-vm-$(Date:yyyyMMdd)$(Rev:.r)
 resources:
   pipelines:
   - pipeline: convertdisks
-    source: isscala-convert-disks
+    source: iscala-convert-disks 
     trigger: true
 
 parameters:
