@@ -3,6 +3,12 @@ pr: none
 
 name: create-vm-$(Date:yyyyMMdd)$(Rev:.r)
 
+resources:
+  pipelines:
+  - pipeline: convertdisks
+    source: isscala-convert-disks
+    trigger: true
+
 parameters:
 - name: targetEnv
   displayName: Target environment
