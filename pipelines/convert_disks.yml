@@ -625,6 +625,9 @@ stages:
 
                     if ($item.BlobName -eq $osCandidate.BlobName) {
                       Write-Host "Creating OS managed disk: $($item.DiskName)"
+                      Write-Host "DEBUG: Creating OS disk with Hyper-V generation V2"
+                      Write-Host "DEBUG: VHD URI = $vhdUri"
+                      Write-Host "DEBUG: Disk name = $($item.DiskName)"
                       az disk create `
                         --resource-group $rg `
                         --name $item.DiskName `
@@ -634,6 +637,11 @@ stages:
                         --hyper-v-generation V2 `
                         --sku StandardSSD_LRS `
                         --only-show-errors
+                      az disk show `
+                        --resource-group $rg `
+                        --name $item.DiskName `
+                        --query "{name:name,hyperVGeneration:hyperVGeneration,osType:osType,createOption:creationData.createOption}" `
+                        -o json
                     }
                     else {
                       Write-Host "Creating data managed disk: $($item.DiskName)"
