@@ -1,6 +1,8 @@
 trigger: none
 pr: none
 
+name: create-vm-$(Date:yyyyMMdd)$(Rev:.r)
+
 parameters:
 - name: targetEnv
   displayName: Target environment
