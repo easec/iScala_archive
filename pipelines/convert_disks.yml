@@ -531,7 +531,7 @@ stages:
                 scriptLocation: inlineScript
                 inlineScript: |
                   $ErrorActionPreference = "Stop"
-
+                  Write-Host "### DEBUG COMMIT MARKER 2026-04-17 06:15 V2 TEST inlineScript ###"
                   function Get-ManagedDiskName {
                     param([string]$BlobName)
 
@@ -637,11 +637,13 @@ stages:
                         --hyper-v-generation V2 `
                         --sku StandardSSD_LRS `
                         --only-show-errors
+                      Write-Host "### DEBUG OS CREATE ### Disk=$($item.DiskName) VHD=$vhdUri HyperV=V2"
                       az disk show `
                         --resource-group $rg `
                         --name $item.DiskName `
                         --query "{name:name,hyperVGeneration:hyperVGeneration,osType:osType,createOption:creationData.createOption}" `
                         -o json
+                      Write-Host "### DEBUG AFTER CREATE ###"
                     }
                     else {
                       Write-Host "Creating data managed disk: $($item.DiskName)"
