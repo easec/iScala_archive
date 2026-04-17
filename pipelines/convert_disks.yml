@@ -352,7 +352,7 @@ stages:
                   --location $location `
                   --source $vhdUri `
                   --os-type Windows `
-                  --hyper-v-generation V1 `
+                  --hyper-v-generation V2 `
                   --sku StandardSSD_LRS `
                   --only-show-errors
               }
