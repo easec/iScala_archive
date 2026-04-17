@@ -35,7 +35,6 @@ variables:
     value: rg-iscala-archive-prod
   - name: storageAccount
     value: stiscalasnapshotprod
-    # added because it was missing in prod
   - name: rgLocation
     value: swedencentral
   - name: containerName
@@ -83,17 +82,46 @@ stages:
             if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
               az group delete --name "$RESOURCE_GROUP" --yes --no-wait
               echo "Resource group deletion started: $RESOURCE_GROUP"
+
+              echo "Waiting for resource group deletion to complete..."
+              RG_DELETED=0
+              for i in {1..60}; do
+                if [ "$(az group exists --name "$RESOURCE_GROUP")" = "false" ]; then
+                  RG_DELETED=1
+                  echo "Resource group deleted: $RESOURCE_GROUP"
+                  break
+                fi
+
+                echo "Resource group still deleting, waiting 10 seconds... ($i/60)"
+                sleep 10
+              done
+
+              if [ "$RG_DELETED" -ne 1 ]; then
+                echo "Resource group deletion did not finish within the wait period: $RESOURCE_GROUP"
+              fi
             else
               echo "Resource group does not exist: $RESOURCE_GROUP"
             fi
 
             echo "Checking if Key Vault $KEYVAULT exists in deleted list."
-            if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
+            KV_FOUND=0
+            for i in {1..30}; do
+              if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
+                KV_FOUND=1
+                echo "Key Vault found in deleted list: $KEYVAULT"
+                break
+              fi
+
+              echo "Key Vault not yet in deleted list, waiting 10 seconds... ($i/30)"
+              sleep 10
+            done
+
+            if [ "$KV_FOUND" -eq 1 ]; then
               echo "Purging Key Vault: $KEYVAULT"
               az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
               echo "Key Vault purge started: $KEYVAULT"
             else
-              echo "Key Vault not found in deleted list: $KEYVAULT"
+              echo "Key Vault did not appear in deleted list during this run: $KEYVAULT"
             fi
 
             echo "Environment removal started."
@@ -132,17 +160,46 @@ stages:
                   if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
                     az group delete --name "$RESOURCE_GROUP" --yes --no-wait
                     echo "Resource group deletion started: $RESOURCE_GROUP"
+
+                    echo "Waiting for resource group deletion to complete..."
+                    RG_DELETED=0
+                    for i in {1..60}; do
+                      if [ "$(az group exists --name "$RESOURCE_GROUP")" = "false" ]; then
+                        RG_DELETED=1
+                        echo "Resource group deleted: $RESOURCE_GROUP"
+                        break
+                      fi
+
+                      echo "Resource group still deleting, waiting 10 seconds... ($i/60)"
+                      sleep 10
+                    done
+
+                    if [ "$RG_DELETED" -ne 1 ]; then
+                      echo "Resource group deletion did not finish within the wait period: $RESOURCE_GROUP"
+                    fi
                   else
                     echo "Resource group does not exist: $RESOURCE_GROUP"
                   fi
 
                   echo "Checking if Key Vault $KEYVAULT exists in deleted list."
-                  if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
+                  KV_FOUND=0
+                  for i in {1..30}; do
+                    if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
+                      KV_FOUND=1
+                      echo "Key Vault found in deleted list: $KEYVAULT"
+                      break
+                    fi
+
+                    echo "Key Vault not yet in deleted list, waiting 10 seconds... ($i/30)"
+                    sleep 10
+                  done
+
+                  if [ "$KV_FOUND" -eq 1 ]; then
                     echo "Purging Key Vault: $KEYVAULT"
                     az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
                     echo "Key Vault purge started: $KEYVAULT"
                   else
-                    echo "Key Vault not found in deleted list: $KEYVAULT"
+                    echo "Key Vault did not appear in deleted list during this run: $KEYVAULT"
                   fi
 
                   echo "Environment removal started."
