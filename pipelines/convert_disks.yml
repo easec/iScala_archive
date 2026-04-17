@@ -11,6 +11,13 @@ parameters:
   - dev
   - prod
 
+- name: hyperVGeneration
+  type: string
+  default: V2
+  values:
+  - V1
+  - V2
+
 - name: azureServiceConnection
   type: string
   default: Azure-Service-Connection-Sub
@@ -352,7 +359,7 @@ stages:
                   --location $location `
                   --source $vhdUri `
                   --os-type Windows `
-                  --hyper-v-generation V2 `
+                  --hyper-v-generation ${{ parameters.hyperVGeneration }} `
                   --sku StandardSSD_LRS `
                   --only-show-errors
               }
@@ -625,25 +632,20 @@ stages:
 
                     if ($item.BlobName -eq $osCandidate.BlobName) {
                       Write-Host "Creating OS managed disk: $($item.DiskName)"
-                      Write-Host "DEBUG: Creating OS disk with Hyper-V generation V2"
-                      Write-Host "DEBUG: VHD URI = $vhdUri"
-                      Write-Host "DEBUG: Disk name = $($item.DiskName)"
                       az disk create `
                         --resource-group $rg `
                         --name $item.DiskName `
                         --location $location `
                         --source $vhdUri `
                         --os-type Windows `
-                        --hyper-v-generation V2 `
+                        --hyper-v-generation ${{ parameters.hyperVGeneration }}
                         --sku StandardSSD_LRS `
                         --only-show-errors
-                      Write-Host "### DEBUG OS CREATE ### Disk=$($item.DiskName) VHD=$vhdUri HyperV=V2"
                       az disk show `
                         --resource-group $rg `
                         --name $item.DiskName `
                         --query "{name:name,hyperVGeneration:hyperVGeneration,osType:osType,createOption:creationData.createOption}" `
                         -o json
-                      Write-Host "### DEBUG AFTER CREATE ###"
                     }
                     else {
                       Write-Host "Creating data managed disk: $($item.DiskName)"
