@@ -638,7 +638,7 @@ stages:
                         --location $location `
                         --source $vhdUri `
                         --os-type Windows `
-                        --hyper-v-generation ${{ parameters.hyperVGeneration }}
+                        --hyper-v-generation ${{ parameters.hyperVGeneration }} `
                         --sku StandardSSD_LRS `
                         --only-show-errors
                       az disk show `
