@@ -1,0 +1,91 @@
+parameters:
+- name: azureServiceConnection
+  type: string
+
+- name: resourceGroupName
+  type: string
+
+- name: rgLocation
+  type: string
+
+- name: keyVaultName
+  type: string
+
+- name: storageAccountName
+  type: string
+  default: snapshottestsa
+
+- name: sharedContainerName
+  type: string
+  default: snapshot
+
+steps:
+- checkout: self
+
+- task: AzureCLI@2
+  displayName: Remove environment
+  inputs:
+    azureSubscription: ${{ parameters.azureServiceConnection }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      set -euo pipefail
+
+      RESOURCE_GROUP="${{ parameters.resourceGroupName }}"
+      LOCATION="${{ parameters.rgLocation }}"
+      KEYVAULT="${{ parameters.keyVaultName }}"
+      STORAGEACCOUNT="${{ parameters.storageAccountName }}"
+      SHARED_CONTAINER="${{ parameters.sharedContainerName }}"
+
+      echo "Removing environment resources for: $RESOURCE_GROUP"
+      echo "Shared storage account $STORAGEACCOUNT will NOT be touched."
+      echo "Shared container $SHARED_CONTAINER will NOT be touched."
+
+      echo "Checking resource group: $RESOURCE_GROUP"
+      if [ "$(az group exists --name "$RESOURCE_GROUP")" = "true" ]; then
+        az group delete --name "$RESOURCE_GROUP" --yes --no-wait
+        echo "Resource group deletion started: $RESOURCE_GROUP"
+
+        echo "Waiting for resource group deletion to complete..."
+        RG_DELETED=0
+        for i in {1..60}; do
+          if [ "$(az group exists --name "$RESOURCE_GROUP")" = "false" ]; then
+            RG_DELETED=1
+            echo "Resource group deleted: $RESOURCE_GROUP"
+            break
+          fi
+
+          echo "Resource group still deleting, waiting 10 seconds... ($i/60)"
+          sleep 10
+        done
+
+        if [ "$RG_DELETED" -ne 1 ]; then
+          echo "Resource group deletion did not finish within the wait period: $RESOURCE_GROUP"
+        fi
+      else
+        echo "Resource group does not exist: $RESOURCE_GROUP"
+      fi
+
+      echo "Checking if Key Vault $KEYVAULT exists in deleted list."
+      KV_FOUND=0
+      for i in {1..30}; do
+        if az keyvault list-deleted --query "[?name=='$KEYVAULT'] | length(@)" -o tsv | grep -q "^1$"; then
+          KV_FOUND=1
+          echo "Key Vault found in deleted list: $KEYVAULT"
+          break
+        fi
+
+        echo "Key Vault not yet in deleted list, waiting 10 seconds... ($i/30)"
+        sleep 10
+      done
+
+      if [ "$KV_FOUND" -eq 1 ]; then
+        echo "Purging Key Vault: $KEYVAULT"
+        az keyvault purge --name "$KEYVAULT" --location "$LOCATION" --no-wait
+        echo "Key Vault purge started: $KEYVAULT"
+      else
+        echo "Key Vault did not appear in deleted list during this run: $KEYVAULT"
+      fi
+
+      echo "Environment removal started."
+      echo "Shared working container was NOT deleted."
