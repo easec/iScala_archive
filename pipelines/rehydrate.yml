@@ -3,11 +3,11 @@ pr: none
 
 name: rehydrate-$(Date:yyyyMMdd)$(Rev:.r)
 
-resources:
-  pipelines:
-  - pipeline: logicapp
-    source: iscala-create-logicapp
-    trigger: true
+#resources:
+#  pipelines:
+#  - pipeline: logicapp
+#    source: iscala-create-logicapp
+#    trigger: true
 
 parameters:
 - name: targetEnv
