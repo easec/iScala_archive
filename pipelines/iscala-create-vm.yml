@@ -1,14 +1,6 @@
 trigger: none
 pr: none
 
-name: create-vm-$(Date:yyyyMMdd)$(Rev:.r)
-
-resources:
-  pipelines:
-  - pipeline: convertdisks
-    source: iscala-convert-disks 
-    trigger: true
-
 parameters:
 - name: targetEnv
   displayName: Target environment
@@ -26,10 +18,12 @@ parameters:
 - name: vmName
   displayName: VM name
   type: string
+  default: ''
 
-- name: diskPrefix
-  displayName: Restored disk prefix
+- name: resourceTags
+  displayName: Resource tags
   type: string
+  default: 'Environment;iScala,Function;archive'
 
 - name: vmSize
   displayName: VM size
@@ -62,6 +56,8 @@ variables:
     value: ${{ parameters.vmName }}-nic
   - name: publicIpName
     value: ${{ parameters.vmName }}-pip
+  - name: nsgName
+    value: ${{ parameters.vmName }}-nsg
   - name: vnetAddressPrefix
     value: 10.60.0.0/16
   - name: subnetPrefix
@@ -84,6 +80,8 @@ variables:
     value: ${{ parameters.vmName }}-nic
   - name: publicIpName
     value: ${{ parameters.vmName }}-pip
+  - name: nsgName
+    value: ${{ parameters.vmName }}-nsg
   - name: vnetAddressPrefix
     value: 10.61.0.0/16
   - name: subnetPrefix
@@ -118,17 +116,35 @@ stages:
                 $rg                = "$(targetResourceGroup)"
                 $location          = "$(location)"
                 $vmName            = "${{ parameters.vmName }}".Trim()
-                $diskPrefix        = "${{ parameters.diskPrefix }}".Trim()
+                $resourceTagsInput = "${{ parameters.resourceTags }}".Trim()
                 $vmSize            = "${{ parameters.vmSize }}"
                 $vnetName          = "$(vnetName)"
                 $subnetName        = "$(subnetName)"
                 $nicName           = "$(nicName)"
                 $publicIpName      = "$(publicIpName)"
+                $nsgName           = "$(nsgName)"
                 $vnetPrefix        = "$(vnetAddressPrefix)"
                 $subnetPrefix      = "$(subnetPrefix)"
                 $targetEnv         = "${{ parameters.targetEnv }}"
                 $createPublicIp    = "${{ parameters.createPublicIp }}".ToLower() -eq "true"
                 $allowPublicIpProd = "${{ parameters.allowPublicIpInProd }}".ToLower() -eq "true"
+
+                function Apply-TagsToResource {
+                  param(
+                    [string]$ResourceId,
+                    [string[]]$TagArgs
+                  )
+
+                  if (-not $ResourceId -or -not $TagArgs -or $TagArgs.Count -eq 0) {
+                    return
+                  }
+
+                  az tag update `
+                    --resource-id $ResourceId `
+                    --operation Merge `
+                    --tags $TagArgs `
+                    --only-show-errors | Out-Null
+                }
 
                 # Validate vmName
                 if ([string]::IsNullOrWhiteSpace($vmName)) {
@@ -143,24 +159,38 @@ stages:
                   throw "Parameter 'vmName' may only contain letters, numbers, and hyphens."
                 }
 
-                # Validate diskPrefix
-                if ([string]::IsNullOrWhiteSpace($diskPrefix)) {
-                  throw "Parameter 'diskPrefix' is mandatory and cannot be empty."
-                }
+                # Parse tags: key;value,key;value
+                $tagArgs = @()
+                if (-not [string]::IsNullOrWhiteSpace($resourceTagsInput)) {
+                  $pairs = $resourceTagsInput -split ','
 
-                if ($diskPrefix.Length -gt 64) {
-                  throw "Parameter 'diskPrefix' is too long. Keep it at 64 characters or less."
-                }
+                  foreach ($pair in $pairs) {
+                    $trimmed = $pair.Trim()
+                    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+                      continue
+                    }
 
-                if ($diskPrefix -notmatch '^[A-Za-z0-9-]+$') {
-                  throw "Parameter 'diskPrefix' may only contain letters, numbers, and hyphens."
+                    $kv = $trimmed -split ';', 2
+                    if ($kv.Count -ne 2) {
+                      throw "Invalid tag format '$trimmed'. Use key;value,key;value"
+                    }
+
+                    $key = $kv[0].Trim()
+                    $value = $kv[1].Trim()
+
+                    if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
+                      throw "Invalid tag format '$trimmed'. Key and value must not be empty."
+                    }
+
+                    $tagArgs += "$key=$value"
+                  }
                 }
 
                 Write-Host "Resource group : $rg"
                 Write-Host "VM name        : $vmName"
-                Write-Host "Disk prefix    : $diskPrefix"
                 Write-Host "Location       : $location"
                 Write-Host "VM size        : $vmSize"
+                Write-Host "Tags           : $($tagArgs -join ', ')"
 
                 $usePublicIp = $false
                 if ($createPublicIp) {
@@ -174,7 +204,7 @@ stages:
                 Write-Host "allowPublicIpInProd : $allowPublicIpProd"
                 Write-Host "usePublicIp         : $usePublicIp"
 
-                # Get all disks in resource group
+                # Discover managed disks in target RG
                 $allDiskRows = az disk list `
                   --resource-group $rg `
                   --query "[].[name,id]" `
@@ -184,50 +214,100 @@ stages:
                   throw "No managed disks found in resource group '$rg'. Run the restore disk pipeline first."
                 }
 
-                $diskMap = @{}
+                $report = @()
+
                 foreach ($row in $allDiskRows) {
-                  $diskMap[$row[0]] = $row[1]
+                  $name = $row[0]
+                  $id   = $row[1]
+
+                  $score = 0
+                  $reasons = @()
+
+                  if ($name -match '(?i)-osdisk$') {
+                    $score += 300
+                    $reasons += "name ends with osdisk"
+                  }
+
+                  if ($name -match '(?i)osdisk') {
+                    $score += 200
+                    $reasons += "name contains osdisk"
+                  }
+
+                  if ($name -match '(?i)cdisken') {
+                    $score += 200
+                    $reasons += "name contains cdisken"
+                  }
+
+                  if ($name -match '(?i)^sqlvm-osdisk$') {
+                    $score += 300
+                    $reasons += "explicit sqlvm osdisk"
+                  }
+
+                  if ($name -match '(?i)tempdb') {
+                    $score -= 200
+                    $reasons += "name contains tempdb"
+                  }
+
+                  if ($name -match '(?i)log') {
+                    $score -= 150
+                    $reasons += "name contains log"
+                  }
+
+                  if ($name -match '(?i)data|datadisk') {
+                    $score -= 150
+                    $reasons += "name contains data/datadisk"
+                  }
+
+                  $report += [pscustomobject]@{
+                    DiskName = $name
+                    DiskId   = $id
+                    Score    = $score
+                    Reasons  = ($reasons -join '; ')
+                  }
                 }
 
-                # Expected stable disk names from restore pipeline
-                $expectedOsDisk = "$diskPrefix-osdisk"
-                $expectedTempDb = "$diskPrefix-tempdb"
-                $expectedData1  = "$diskPrefix-data1"
-                $expectedLog    = "$diskPrefix-log"
+                Write-Host "Disk detection report:"
+                $report | Sort-Object Score -Descending | Format-Table -AutoSize | Out-String | Write-Host
 
-                # fallback for simple restore sets
-                $altDataDisk0   = "$diskPrefix-datadisk0"
-                $altDataDisk1   = "$diskPrefix-datadisk1"
+                $osDisk = $report | Sort-Object Score -Descending | Select-Object -First 1
 
-                if (-not $diskMap.ContainsKey($expectedOsDisk)) {
-                  throw "Expected OS disk '$expectedOsDisk' was not found in resource group '$rg'."
+                if (-not $osDisk -or $osDisk.Score -lt 50) {
+                  throw "OS disk detection confidence too low."
                 }
 
-                $osDiskId = $diskMap[$expectedOsDisk]
+                $dataDisks = $report | Where-Object { $_.DiskName -ne $osDisk.DiskName }
 
-                $dataDiskOrder = @()
+                # Preferred order for known SQL-style names
+                $orderedDataDisks = @()
 
-                # Preferred SQL layout
-                if ($diskMap.ContainsKey($expectedTempDb)) { $dataDiskOrder += $expectedTempDb }
-                if ($diskMap.ContainsKey($expectedData1))  { $dataDiskOrder += $expectedData1 }
-                if ($diskMap.ContainsKey($expectedLog))    { $dataDiskOrder += $expectedLog }
+                $preferredPatterns = @(
+                  '(?i)tempdb',
+                  '(?i)data1|ldata1|datadisk0',
+                  '(?i)log'
+                )
 
-                # Fallback for simple restore sets like easec-test-datadisk0
-                if ($dataDiskOrder.Count -eq 0 -and $diskMap.ContainsKey($altDataDisk0)) {
-                  $dataDiskOrder += $altDataDisk0
+                foreach ($pattern in $preferredPatterns) {
+                  $matches = $dataDisks | Where-Object { $_.DiskName -match $pattern }
+                  foreach ($match in $matches) {
+                    if ($orderedDataDisks.DiskName -notcontains $match.DiskName) {
+                      $orderedDataDisks += $match
+                    }
+                  }
                 }
 
-                if ($dataDiskOrder.Count -eq 0 -and $diskMap.ContainsKey($altDataDisk1)) {
-                  $dataDiskOrder += $altDataDisk1
+                foreach ($disk in $dataDisks) {
+                  if ($orderedDataDisks.DiskName -notcontains $disk.DiskName) {
+                    $orderedDataDisks += $disk
+                  }
                 }
 
-                Write-Host "OS disk: $expectedOsDisk"
+                Write-Host "Chosen OS disk: $($osDisk.DiskName)"
                 Write-Host "Data disk attach order:"
-                if ($dataDiskOrder.Count -eq 0) {
+                if (-not $orderedDataDisks -or $orderedDataDisks.Count -eq 0) {
                   Write-Host " - none"
                 }
                 else {
-                  $dataDiskOrder | ForEach-Object { Write-Host " - $_" }
+                  $orderedDataDisks | ForEach-Object { Write-Host " - $($_.DiskName)" }
                 }
 
                 # Create or reuse VNet
@@ -250,6 +330,39 @@ stages:
                 else {
                   Write-Host "VNet already exists: $vnetName"
                 }
+
+                # Create or reuse NSG
+                $nsgExists = az network nsg show `
+                  --resource-group $rg `
+                  --name $nsgName `
+                  --query "name" -o tsv 2>$null
+
+                if (-not $nsgExists) {
+                  Write-Host "Creating NSG: $nsgName"
+                  az network nsg create `
+                    --resource-group $rg `
+                    --location $location `
+                    --name $nsgName `
+                    --only-show-errors | Out-Null
+                }
+                else {
+                  Write-Host "NSG already exists: $nsgName"
+                }
+
+                # Ensure RDP rule exists
+                az network nsg rule create `
+                  --resource-group $rg `
+                  --nsg-name $nsgName `
+                  --name Allow-RDP `
+                  --priority 1000 `
+                  --direction Inbound `
+                  --access Allow `
+                  --protocol Tcp `
+                  --source-address-prefixes Internet `
+                  --source-port-ranges "*" `
+                  --destination-address-prefixes "*" `
+                  --destination-port-ranges 3389 `
+                  --only-show-errors | Out-Null
 
                 # Create or reuse Public IP if requested
                 if ($usePublicIp) {
@@ -289,6 +402,7 @@ stages:
                       --name $nicName `
                       --vnet-name $vnetName `
                       --subnet $subnetName `
+                      --network-security-group $nsgName `
                       --public-ip-address $publicIpName `
                       --only-show-errors | Out-Null
                   }
@@ -299,12 +413,20 @@ stages:
                       --name $nicName `
                       --vnet-name $vnetName `
                       --subnet $subnetName `
+                      --network-security-group $nsgName `
                       --only-show-errors | Out-Null
                   }
                 }
                 else {
                   Write-Host "NIC already exists: $nicName"
                 }
+
+                # Ensure NIC has correct NSG
+                az network nic update `
+                  --resource-group $rg `
+                  --name $nicName `
+                  --network-security-group $nsgName `
+                  --only-show-errors | Out-Null
 
                 # Ensure NIC has Public IP if requested
                 if ($usePublicIp) {
@@ -397,16 +519,16 @@ stages:
 
                 if (-not $vmExists) {
                   Write-Host "Creating VM: $vmName"
-                  Write-Host "Using OS disk ID: $osDiskId"
+                  Write-Host "Using OS disk ID: $($osDisk.DiskId)"
 
                   az vm create `
                     --resource-group $rg `
                     --name $vmName `
-                    --attach-os-disk $osDiskId `
+                    --attach-os-disk $($osDisk.DiskId) `
                     --os-type Windows `
                     --size $vmSize `
                     --nics $nicName `
-                    -o json
+                    -o json | Out-Null
 
                   if ($LASTEXITCODE -ne 0) {
                     throw "VM creation failed for '$vmName'."
@@ -426,8 +548,10 @@ stages:
                   throw "VM '$vmName' does not exist, so data disks cannot be attached."
                 }
 
-                # Attach data disks in explicit order
-                foreach ($diskName in $dataDiskOrder) {
+                # Attach data disks in chosen order
+                foreach ($disk in $orderedDataDisks) {
+                  $diskName = $disk.DiskName
+
                   $attachedCount = az vm show `
                     --resource-group $rg `
                     --name $vmName `
@@ -451,6 +575,33 @@ stages:
                   }
                 }
 
+                # Apply tags
+                $vmId = az vm show `
+                  --resource-group $rg `
+                  --name $vmName `
+                  --query "id" -o tsv 2>$null
+                Apply-TagsToResource -ResourceId $vmId -TagArgs $tagArgs
+
+                $nicId = az network nic show `
+                  --resource-group $rg `
+                  --name $nicName `
+                  --query "id" -o tsv 2>$null
+                Apply-TagsToResource -ResourceId $nicId -TagArgs $tagArgs
+
+                $nsgId = az network nsg show `
+                  --resource-group $rg `
+                  --name $nsgName `
+                  --query "id" -o tsv 2>$null
+                Apply-TagsToResource -ResourceId $nsgId -TagArgs $tagArgs
+
+                if ($usePublicIp) {
+                  $pipId = az network public-ip show `
+                    --resource-group $rg `
+                    --name $publicIpName `
+                    --query "id" -o tsv 2>$null
+                  Apply-TagsToResource -ResourceId $pipId -TagArgs $tagArgs
+                }
+
                 $powerState = az vm get-instance-view `
                   --resource-group $rg `
                   --name $vmName `
@@ -467,11 +618,12 @@ stages:
 
                 Write-Host "==== VM SUMMARY ===="
                 Write-Host "VM name       : $vmName"
-                Write-Host "Disk prefix   : $diskPrefix"
                 Write-Host "Resource group: $rg"
-                Write-Host "OS disk       : $expectedOsDisk"
-                Write-Host "Data disks    : $($dataDiskOrder -join ', ')"
+                Write-Host "OS disk       : $($osDisk.DiskName)"
+                Write-Host "Data disks    : $($orderedDataDisks.DiskName -join ', ')"
                 Write-Host "NIC           : $nicName"
+                Write-Host "NSG           : $nsgName"
                 Write-Host "Power state   : $powerState"
                 Write-Host "Public IP     : $publicIp"
+                Write-Host "Tags          : $($tagArgs -join ', ')"
                 Write-Host "VM pipeline complete."
