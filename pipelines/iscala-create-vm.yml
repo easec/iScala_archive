@@ -23,7 +23,7 @@ parameters:
 - name: resourceTags
   displayName: Resource tags
   type: string
-  default: 'Environment;iScala,Function;archive'
+  default: 'Environment; iScala,Function; archive'
 
 - name: vmSize
   displayName: VM size
