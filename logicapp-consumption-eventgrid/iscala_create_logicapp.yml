@@ -3,11 +3,11 @@ pr: none
 
 name: create-logicapp-$(Date:yyyyMMdd)$(Rev:.r)
 
-#resources:
-#  pipelines:
-#  - pipeline: createenv
-#    source: iscala-create-env
-#    trigger: true
+resources:
+  pipelines:
+  - pipeline: createenv
+    source: iscala-create-env
+    trigger: true
 
 parameters:
 - name: targetEnv
