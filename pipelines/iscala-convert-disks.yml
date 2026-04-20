@@ -5,22 +5,30 @@ name: convert-disks-$(Date:yyyyMMdd)$(Rev:.r)
 
 parameters:
 - name: targetEnv
+  displayName: Target environment
   type: string
   default: dev
   values:
   - dev
   - prod
 
+- name: azureServiceConnection
+  displayName: Azure service connection
+  type: string
+  default: Azure-Service-Connection-Sub
+
 - name: hyperVGeneration
+  displayName: Hyper-V generation
   type: string
   default: V2
   values:
   - V1
   - V2
 
-- name: azureServiceConnection
+- name: resourceTags
+  displayName: Resource tags (optional, max 4, format key;value,key;value)
   type: string
-  default: Azure-Service-Connection-Sub
+  default: ''
 
 variables:
 - name: rehydratedSourceStorageAccount
@@ -217,7 +225,7 @@ stages:
           scriptLocation: inlineScript
           inlineScript: |
             $ErrorActionPreference = "Stop"
-            Write-Host "DEBUG MARKER: convert_disks.yml UPDATED V2 $(Get-Date)"
+
             function Get-ManagedDiskName {
               param([string]$BlobName)
 
@@ -236,10 +244,75 @@ stages:
               }
             }
 
-            $account   = "$(targetStorageAccount)"
-            $container = "$(targetContainer)"
-            $rg        = "$(targetResourceGroup)"
-            $location  = "$(location)"
+            function Get-TagArgs {
+              param([string]$ResourceTagsInput)
+
+              $tagArgs = @()
+
+              if (-not [string]::IsNullOrWhiteSpace($ResourceTagsInput)) {
+                $pairs = $ResourceTagsInput -split ','
+
+                if ($pairs.Count -gt 4) {
+                  throw "A maximum of 4 tags is allowed."
+                }
+
+                foreach ($pair in $pairs) {
+                  $trimmed = $pair.Trim()
+                  if ([string]::IsNullOrWhiteSpace($trimmed)) {
+                    continue
+                  }
+
+                  $kv = $trimmed -split ';', 2
+                  if ($kv.Count -ne 2) {
+                    throw "Invalid tag format '$trimmed'. Use key;value,key;value"
+                  }
+
+                  $key = $kv[0].Trim()
+                  $value = $kv[1].Trim()
+
+                  if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
+                    throw "Invalid tag format '$trimmed'. Key and value must not be empty."
+                  }
+
+                  $tagArgs += "$key=$value"
+                }
+              }
+
+              return $tagArgs
+            }
+
+            function Apply-TagsToDisk {
+              param(
+                [string]$ResourceGroup,
+                [string]$DiskName,
+                [string[]]$TagArgs
+              )
+
+              if (-not $TagArgs -or $TagArgs.Count -eq 0) {
+                return
+              }
+
+              $diskId = az disk show `
+                --resource-group $ResourceGroup `
+                --name $DiskName `
+                --query "id" -o tsv
+
+              az tag update `
+                --resource-id $diskId `
+                --operation Merge `
+                --tags $TagArgs `
+                --only-show-errors | Out-Null
+            }
+
+            $account             = "$(targetStorageAccount)"
+            $container           = "$(targetContainer)"
+            $rg                  = "$(targetResourceGroup)"
+            $location            = "$(location)"
+            $hyperVGeneration    = "${{ parameters.hyperVGeneration }}"
+            $resourceTagsInput   = "${{ parameters.resourceTags }}".Trim()
+
+            $baseTagArgs = Get-TagArgs -ResourceTagsInput $resourceTagsInput
+            Write-Host "Resolved disk tags: $($baseTagArgs -join ', ')"
 
             $pageBlobs = az storage blob list `
               --account-name $account `
@@ -353,25 +426,61 @@ stages:
 
               if ($item.BlobName -eq $osCandidate.BlobName) {
                 Write-Host "Creating OS managed disk: $($item.DiskName)"
+
                 az disk create `
                   --resource-group $rg `
                   --name $item.DiskName `
                   --location $location `
                   --source $vhdUri `
                   --os-type Windows `
-                  --hyper-v-generation ${{ parameters.hyperVGeneration }} `
+                  --hyper-v-generation $hyperVGeneration `
                   --sku StandardSSD_LRS `
-                  --only-show-errors
+                  --only-show-errors | Out-Null
+
+                $osDiskTagArgs = @($baseTagArgs)
+                if ($osDiskTagArgs.Count -gt 0) {
+                  $osDiskTagArgs += "DiskRole=os"
+                  $osDiskTagArgs += "SourceBlob=$($item.BlobName)"
+                }
+
+                Apply-TagsToDisk `
+                  -ResourceGroup $rg `
+                  -DiskName $item.DiskName `
+                  -TagArgs $osDiskTagArgs
+
+                az disk show `
+                  --resource-group $rg `
+                  --name $item.DiskName `
+                  --query "{name:name,hyperVGeneration:hyperVGeneration,osType:osType,createOption:creationData.createOption,tags:tags}" `
+                  -o json
               }
               else {
                 Write-Host "Creating data managed disk: $($item.DiskName)"
+
                 az disk create `
                   --resource-group $rg `
                   --name $item.DiskName `
                   --location $location `
                   --source $vhdUri `
                   --sku StandardSSD_LRS `
-                  --only-show-errors
+                  --only-show-errors | Out-Null
+
+                $dataDiskTagArgs = @($baseTagArgs)
+                if ($dataDiskTagArgs.Count -gt 0) {
+                  $dataDiskTagArgs += "DiskRole=data"
+                  $dataDiskTagArgs += "SourceBlob=$($item.BlobName)"
+                }
+
+                Apply-TagsToDisk `
+                  -ResourceGroup $rg `
+                  -DiskName $item.DiskName `
+                  -TagArgs $dataDiskTagArgs
+
+                az disk show `
+                  --resource-group $rg `
+                  --name $item.DiskName `
+                  --query "{name:name,hyperVGeneration:hyperVGeneration,osType:osType,createOption:creationData.createOption,tags:tags}" `
+                  -o json
               }
             }
 
@@ -538,7 +647,7 @@ stages:
                 scriptLocation: inlineScript
                 inlineScript: |
                   $ErrorActionPreference = "Stop"
-                  Write-Host "### DEBUG COMMIT MARKER 2026-04-17 06:15 V2 TEST inlineScript ###"
+
                   function Get-ManagedDiskName {
                     param([string]$BlobName)
 
@@ -557,10 +666,75 @@ stages:
                     }
                   }
 
-                  $account   = "$(targetStorageAccount)"
-                  $container = "$(targetContainer)"
-                  $rg        = "$(targetResourceGroup)"
-                  $location  = "$(location)"
+                  function Get-TagArgs {
+                    param([string]$ResourceTagsInput)
+
+                    $tagArgs = @()
+
+                    if (-not [string]::IsNullOrWhiteSpace($ResourceTagsInput)) {
+                      $pairs = $ResourceTagsInput -split ','
+
+                      if ($pairs.Count -gt 4) {
+                        throw "A maximum of 4 tags is allowed."
+                      }
+
+                      foreach ($pair in $pairs) {
+                        $trimmed = $pair.Trim()
+                        if ([string]::IsNullOrWhiteSpace($trimmed)) {
+                          continue
+                        }
+
+                        $kv = $trimmed -split ';', 2
+                        if ($kv.Count -ne 2) {
+                          throw "Invalid tag format '$trimmed'. Use key;value,key;value"
+                        }
+
+                        $key = $kv[0].Trim()
+                        $value = $kv[1].Trim()
+
+                        if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
+                          throw "Invalid tag format '$trimmed'. Key and value must not be empty."
+                        }
+
+                        $tagArgs += "$key=$value"
+                      }
+                    }
+
+                    return $tagArgs
+                  }
+
+                  function Apply-TagsToDisk {
+                    param(
+                      [string]$ResourceGroup,
+                      [string]$DiskName,
+                      [string[]]$TagArgs
+                    )
+
+                    if (-not $TagArgs -or $TagArgs.Count -eq 0) {
+                      return
+                    }
+
+                    $diskId = az disk show `
+                      --resource-group $ResourceGroup `
+                      --name $DiskName `
+                      --query "id" -o tsv
+
+                    az tag update `
+                      --resource-id $diskId `
+                      --operation Merge `
+                      --tags $TagArgs `
+                      --only-show-errors | Out-Null
+                  }
+
+                  $account             = "$(targetStorageAccount)"
+                  $container           = "$(targetContainer)"
+                  $rg                  = "$(targetResourceGroup)"
+                  $location            = "$(location)"
+                  $hyperVGeneration    = "${{ parameters.hyperVGeneration }}"
+                  $resourceTagsInput   = "${{ parameters.resourceTags }}".Trim()
+
+                  $baseTagArgs = Get-TagArgs -ResourceTagsInput $resourceTagsInput
+                  Write-Host "Resolved disk tags: $($baseTagArgs -join ', ')"
 
                   $pageBlobs = az storage blob list `
                     --account-name $account `
@@ -632,29 +806,60 @@ stages:
 
                     if ($item.BlobName -eq $osCandidate.BlobName) {
                       Write-Host "Creating OS managed disk: $($item.DiskName)"
+
                       az disk create `
                         --resource-group $rg `
                         --name $item.DiskName `
                         --location $location `
                         --source $vhdUri `
                         --os-type Windows `
-                        --hyper-v-generation ${{ parameters.hyperVGeneration }} `
+                        --hyper-v-generation $hyperVGeneration `
                         --sku StandardSSD_LRS `
-                        --only-show-errors
+                        --only-show-errors | Out-Null
+
+                      $osDiskTagArgs = @($baseTagArgs)
+                      if ($osDiskTagArgs.Count -gt 0) {
+                        $osDiskTagArgs += "DiskRole=os"
+                        $osDiskTagArgs += "SourceBlob=$($item.BlobName)"
+                      }
+
+                      Apply-TagsToDisk `
+                        -ResourceGroup $rg `
+                        -DiskName $item.DiskName `
+                        -TagArgs $osDiskTagArgs
+
                       az disk show `
                         --resource-group $rg `
                         --name $item.DiskName `
-                        --query "{name:name,hyperVGeneration:hyperVGeneration,osType:osType,createOption:creationData.createOption}" `
+                        --query "{name:name,hyperVGeneration:hyperVGeneration,osType:osType,createOption:creationData.createOption,tags:tags}" `
                         -o json
                     }
                     else {
                       Write-Host "Creating data managed disk: $($item.DiskName)"
+
                       az disk create `
                         --resource-group $rg `
                         --name $item.DiskName `
                         --location $location `
                         --source $vhdUri `
                         --sku StandardSSD_LRS `
-                        --only-show-errors
+                        --only-show-errors | Out-Null
+
+                      $dataDiskTagArgs = @($baseTagArgs)
+                      if ($dataDiskTagArgs.Count -gt 0) {
+                        $dataDiskTagArgs += "DiskRole=data"
+                        $dataDiskTagArgs += "SourceBlob=$($item.BlobName)"
+                      }
+
+                      Apply-TagsToDisk `
+                        -ResourceGroup $rg `
+                        -DiskName $item.DiskName `
+                        -TagArgs $dataDiskTagArgs
+
+                      az disk show `
+                        --resource-group $rg `
+                        --name $item.DiskName `
+                        --query "{name:name,hyperVGeneration:hyperVGeneration,osType:osType,createOption:creationData.createOption,tags:tags}" `
+                        -o json
                     }
                   }
