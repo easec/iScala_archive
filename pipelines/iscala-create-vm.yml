@@ -1,6 +1,8 @@
 trigger: none
 pr: none
 
+name: create-vm-$(Date:yyyyMMdd)$(Rev:.r)
+
 parameters:
 - name: targetEnv
   displayName: Target environment
@@ -16,14 +18,14 @@ parameters:
   default: Azure-Service-Connection-Sub
 
 - name: vmName
-  displayName: VM name
+  displayName: VM name (required)
   type: string
   default: ''
 
 - name: resourceTags
-  displayName: Resource tags
+  displayName: Resource tags (optional, max 4, format key;value,key;value)
   type: string
-  default: 'Environment; iScala,Function; archive'
+  default: ''
 
 - name: vmSize
   displayName: VM size
@@ -39,6 +41,12 @@ parameters:
   displayName: Allow public IP in PROD
   type: boolean
   default: false
+
+resources:
+  pipelines:
+  - pipeline: convertdisks
+    source: iscala-convert-disks
+    trigger: true
 
 variables:
 # DEV
@@ -113,22 +121,6 @@ stages:
               inlineScript: |
                 $ErrorActionPreference = "Stop"
 
-                $rg                = "$(targetResourceGroup)"
-                $location          = "$(location)"
-                $vmName            = "${{ parameters.vmName }}".Trim()
-                $resourceTagsInput = "${{ parameters.resourceTags }}".Trim()
-                $vmSize            = "${{ parameters.vmSize }}"
-                $vnetName          = "$(vnetName)"
-                $subnetName        = "$(subnetName)"
-                $nicName           = "$(nicName)"
-                $publicIpName      = "$(publicIpName)"
-                $nsgName           = "$(nsgName)"
-                $vnetPrefix        = "$(vnetAddressPrefix)"
-                $subnetPrefix      = "$(subnetPrefix)"
-                $targetEnv         = "${{ parameters.targetEnv }}"
-                $createPublicIp    = "${{ parameters.createPublicIp }}".ToLower() -eq "true"
-                $allowPublicIpProd = "${{ parameters.allowPublicIpInProd }}".ToLower() -eq "true"
-
                 function Apply-TagsToResource {
                   param(
                     [string]$ResourceId,
@@ -146,7 +138,59 @@ stages:
                     --only-show-errors | Out-Null
                 }
 
-                # Validate vmName
+                function Get-TagArgs {
+                  param([string]$ResourceTagsInput)
+
+                  $tagArgs = @()
+
+                  if (-not [string]::IsNullOrWhiteSpace($ResourceTagsInput)) {
+                    $pairs = $ResourceTagsInput -split ','
+
+                    if ($pairs.Count -gt 4) {
+                      throw "A maximum of 4 tags is allowed."
+                    }
+
+                    foreach ($pair in $pairs) {
+                      $trimmed = $pair.Trim()
+                      if ([string]::IsNullOrWhiteSpace($trimmed)) {
+                        continue
+                      }
+
+                      $kv = $trimmed -split ';', 2
+                      if ($kv.Count -ne 2) {
+                        throw "Invalid tag format '$trimmed'. Use key;value,key;value"
+                      }
+
+                      $key = $kv[0].Trim()
+                      $value = $kv[1].Trim()
+
+                      if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
+                        throw "Invalid tag format '$trimmed'. Key and value must not be empty."
+                      }
+
+                      $tagArgs += "$key=$value"
+                    }
+                  }
+
+                  return $tagArgs
+                }
+
+                $rg                = "$(targetResourceGroup)"
+                $location          = "$(location)"
+                $vmName            = "${{ parameters.vmName }}".Trim()
+                $resourceTagsInput = "${{ parameters.resourceTags }}".Trim()
+                $vmSize            = "${{ parameters.vmSize }}"
+                $vnetName          = "$(vnetName)"
+                $subnetName        = "$(subnetName)"
+                $nicName           = "$(nicName)"
+                $publicIpName      = "$(publicIpName)"
+                $nsgName           = "$(nsgName)"
+                $vnetPrefix        = "$(vnetAddressPrefix)"
+                $subnetPrefix      = "$(subnetPrefix)"
+                $targetEnv         = "${{ parameters.targetEnv }}"
+                $createPublicIp    = "${{ parameters.createPublicIp }}".ToLower() -eq "true"
+                $allowPublicIpProd = "${{ parameters.allowPublicIpInProd }}".ToLower() -eq "true"
+
                 if ([string]::IsNullOrWhiteSpace($vmName)) {
                   throw "Parameter 'vmName' is mandatory and cannot be empty."
                 }
@@ -159,32 +203,7 @@ stages:
                   throw "Parameter 'vmName' may only contain letters, numbers, and hyphens."
                 }
 
-                # Parse tags: key;value,key;value
-                $tagArgs = @()
-                if (-not [string]::IsNullOrWhiteSpace($resourceTagsInput)) {
-                  $pairs = $resourceTagsInput -split ','
-
-                  foreach ($pair in $pairs) {
-                    $trimmed = $pair.Trim()
-                    if ([string]::IsNullOrWhiteSpace($trimmed)) {
-                      continue
-                    }
-
-                    $kv = $trimmed -split ';', 2
-                    if ($kv.Count -ne 2) {
-                      throw "Invalid tag format '$trimmed'. Use key;value,key;value"
-                    }
-
-                    $key = $kv[0].Trim()
-                    $value = $kv[1].Trim()
-
-                    if ([string]::IsNullOrWhiteSpace($key) -or [string]::IsNullOrWhiteSpace($value)) {
-                      throw "Invalid tag format '$trimmed'. Key and value must not be empty."
-                    }
-
-                    $tagArgs += "$key=$value"
-                  }
-                }
+                $tagArgs = Get-TagArgs -ResourceTagsInput $resourceTagsInput
 
                 Write-Host "Resource group : $rg"
                 Write-Host "VM name        : $vmName"
@@ -204,10 +223,9 @@ stages:
                 Write-Host "allowPublicIpInProd : $allowPublicIpProd"
                 Write-Host "usePublicIp         : $usePublicIp"
 
-                # Discover managed disks in target RG
                 $allDiskRows = az disk list `
                   --resource-group $rg `
-                  --query "[].[name,id]" `
+                  --query "[].[name,id,tags]" `
                   -o json | ConvertFrom-Json
 
                 if (-not $allDiskRows -or $allDiskRows.Count -eq 0) {
@@ -219,9 +237,15 @@ stages:
                 foreach ($row in $allDiskRows) {
                   $name = $row[0]
                   $id   = $row[1]
+                  $tags = $row[2]
 
                   $score = 0
                   $reasons = @()
+
+                  if ($tags -and $tags.DiskRole -eq 'os') {
+                    $score += 1000
+                    $reasons += "DiskRole=os tag"
+                  }
 
                   if ($name -match '(?i)-osdisk$') {
                     $score += 300
@@ -261,13 +285,14 @@ stages:
                   $report += [pscustomobject]@{
                     DiskName = $name
                     DiskId   = $id
+                    Tags     = $tags
                     Score    = $score
                     Reasons  = ($reasons -join '; ')
                   }
                 }
 
                 Write-Host "Disk detection report:"
-                $report | Sort-Object Score -Descending | Format-Table -AutoSize | Out-String | Write-Host
+                $report | Sort-Object Score -Descending | Select-Object DiskName, Score, Reasons | Format-Table -AutoSize | Out-String | Write-Host
 
                 $osDisk = $report | Sort-Object Score -Descending | Select-Object -First 1
 
@@ -277,7 +302,6 @@ stages:
 
                 $dataDisks = $report | Where-Object { $_.DiskName -ne $osDisk.DiskName }
 
-                # Preferred order for known SQL-style names
                 $orderedDataDisks = @()
 
                 $preferredPatterns = @(
@@ -310,7 +334,6 @@ stages:
                   $orderedDataDisks | ForEach-Object { Write-Host " - $($_.DiskName)" }
                 }
 
-                # Create or reuse VNet
                 $vnetExists = az network vnet show `
                   --resource-group $rg `
                   --name $vnetName `
@@ -331,7 +354,6 @@ stages:
                   Write-Host "VNet already exists: $vnetName"
                 }
 
-                # Create or reuse NSG
                 $nsgExists = az network nsg show `
                   --resource-group $rg `
                   --name $nsgName `
@@ -349,7 +371,6 @@ stages:
                   Write-Host "NSG already exists: $nsgName"
                 }
 
-                # Ensure RDP rule exists
                 az network nsg rule create `
                   --resource-group $rg `
                   --nsg-name $nsgName `
@@ -364,7 +385,6 @@ stages:
                   --destination-port-ranges 3389 `
                   --only-show-errors | Out-Null
 
-                # Create or reuse Public IP if requested
                 if ($usePublicIp) {
                   $pipExists = az network public-ip show `
                     --resource-group $rg `
@@ -386,7 +406,6 @@ stages:
                   }
                 }
 
-                # Create or reuse NIC
                 $nicExists = az network nic show `
                   --resource-group $rg `
                   --name $nicName `
@@ -421,14 +440,12 @@ stages:
                   Write-Host "NIC already exists: $nicName"
                 }
 
-                # Ensure NIC has correct NSG
                 az network nic update `
                   --resource-group $rg `
                   --name $nicName `
                   --network-security-group $nsgName `
                   --only-show-errors | Out-Null
 
-                # Ensure NIC has Public IP if requested
                 if ($usePublicIp) {
                   $ipConfigName = az network nic show `
                     --resource-group $rg `
@@ -462,7 +479,6 @@ stages:
                   }
                 }
 
-                # Quota pre-check
                 Write-Host "Checking quota for VM size: $vmSize in region: $location"
 
                 $vmSizeInfo = az vm list-sizes `
@@ -511,7 +527,6 @@ stages:
                   }
                 }
 
-                # Create VM if missing
                 $vmExists = az vm show `
                   --resource-group $rg `
                   --name $vmName `
@@ -538,7 +553,6 @@ stages:
                   Write-Host "VM already exists: $vmName"
                 }
 
-                # Confirm VM exists before attaching data disks
                 $vmExists = az vm show `
                   --resource-group $rg `
                   --name $vmName `
@@ -548,7 +562,6 @@ stages:
                   throw "VM '$vmName' does not exist, so data disks cannot be attached."
                 }
 
-                # Attach data disks in chosen order
                 foreach ($disk in $orderedDataDisks) {
                   $diskName = $disk.DiskName
 
@@ -575,7 +588,6 @@ stages:
                   }
                 }
 
-                # Apply tags
                 $vmId = az vm show `
                   --resource-group $rg `
                   --name $vmName `
