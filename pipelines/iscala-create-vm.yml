@@ -42,6 +42,16 @@ parameters:
   type: boolean
   default: false
 
+- name: vnetNameOverride
+  displayName: Existing VNet name (optional)
+  type: string
+  default: ''
+
+- name: subnetNameOverride
+  displayName: Existing subnet name (optional)
+  type: string
+  default: ''
+
 resources:
   pipelines:
   - pipeline: convertdisks
@@ -56,9 +66,9 @@ variables:
     value: rg-iscala-archive-dev
   - name: location
     value: swedencentral
-  - name: vnetName
+  - name: defaultVnetName
     value: iscala-archive-dev-vnet
-  - name: subnetName
+  - name: defaultSubnetName
     value: default
   - name: nicName
     value: ${{ parameters.vmName }}-nic
@@ -80,9 +90,9 @@ variables:
     value: rg-iscala-archive-prod
   - name: location
     value: swedencentral
-  - name: vnetName
+  - name: defaultVnetName
     value: iscala-archive-prod-vnet
-  - name: subnetName
+  - name: defaultSubnetName
     value: default
   - name: nicName
     value: ${{ parameters.vmName }}-nic
@@ -175,21 +185,23 @@ stages:
                   return $tagArgs
                 }
 
-                $rg                = "$(targetResourceGroup)"
-                $location          = "$(location)"
-                $vmName            = "${{ parameters.vmName }}".Trim()
-                $resourceTagsInput = "${{ parameters.resourceTags }}".Trim()
-                $vmSize            = "${{ parameters.vmSize }}"
-                $vnetName          = "$(vnetName)"
-                $subnetName        = "$(subnetName)"
-                $nicName           = "$(nicName)"
-                $publicIpName      = "$(publicIpName)"
-                $nsgName           = "$(nsgName)"
-                $vnetPrefix        = "$(vnetAddressPrefix)"
-                $subnetPrefix      = "$(subnetPrefix)"
-                $targetEnv         = "${{ parameters.targetEnv }}"
-                $createPublicIp    = "${{ parameters.createPublicIp }}".ToLower() -eq "true"
-                $allowPublicIpProd = "${{ parameters.allowPublicIpInProd }}".ToLower() -eq "true"
+                $rg                 = "$(targetResourceGroup)"
+                $location           = "$(location)"
+                $vmName             = "${{ parameters.vmName }}".Trim()
+                $resourceTagsInput  = "${{ parameters.resourceTags }}".Trim()
+                $vmSize             = "${{ parameters.vmSize }}"
+                $defaultVnetName    = "$(defaultVnetName)"
+                $defaultSubnetName  = "$(defaultSubnetName)"
+                $vnetNameOverride   = "${{ parameters.vnetNameOverride }}".Trim()
+                $subnetNameOverride = "${{ parameters.subnetNameOverride }}".Trim()
+                $nicName            = "$(nicName)"
+                $publicIpName       = "$(publicIpName)"
+                $nsgName            = "$(nsgName)"
+                $vnetPrefix         = "$(vnetAddressPrefix)"
+                $subnetPrefix       = "$(subnetPrefix)"
+                $targetEnv          = "${{ parameters.targetEnv }}"
+                $createPublicIp     = "${{ parameters.createPublicIp }}".ToLower() -eq "true"
+                $allowPublicIpProd  = "${{ parameters.allowPublicIpInProd }}".ToLower() -eq "true"
 
                 if ([string]::IsNullOrWhiteSpace($vmName)) {
                   throw "Parameter 'vmName' is mandatory and cannot be empty."
@@ -204,6 +216,42 @@ stages:
                 }
 
                 $tagArgs = Get-TagArgs -ResourceTagsInput $resourceTagsInput
+
+                if (([string]::IsNullOrWhiteSpace($vnetNameOverride) -and -not [string]::IsNullOrWhiteSpace($subnetNameOverride)) -or
+                    (-not [string]::IsNullOrWhiteSpace($vnetNameOverride) -and [string]::IsNullOrWhiteSpace($subnetNameOverride))) {
+                  throw "Provide both Existing VNet name and Existing subnet name, or leave both blank."
+                }
+
+                if (-not [string]::IsNullOrWhiteSpace($vnetNameOverride)) {
+                  $vnetName = $vnetNameOverride
+                  $subnetName = $subnetNameOverride
+
+                  $existingVnet = az network vnet show `
+                    --resource-group $rg `
+                    --name $vnetName `
+                    --query "name" -o tsv 2>$null
+
+                  if (-not $existingVnet) {
+                    throw "Specified VNet '$vnetName' was not found in resource group '$rg'."
+                  }
+
+                  $existingSubnet = az network vnet subnet show `
+                    --resource-group $rg `
+                    --vnet-name $vnetName `
+                    --name $subnetName `
+                    --query "name" -o tsv 2>$null
+
+                  if (-not $existingSubnet) {
+                    throw "Specified subnet '$subnetName' was not found in VNet '$vnetName'."
+                  }
+
+                  Write-Host "Using existing VNet/subnet: $vnetName / $subnetName"
+                }
+                else {
+                  $vnetName = $defaultVnetName
+                  $subnetName = $defaultSubnetName
+                  Write-Host "Using default environment VNet/subnet: $vnetName / $subnetName"
+                }
 
                 Write-Host "Resource group : $rg"
                 Write-Host "VM name        : $vmName"
@@ -303,7 +351,6 @@ stages:
                 $dataDisks = $report | Where-Object { $_.DiskName -ne $osDisk.DiskName }
 
                 $orderedDataDisks = @()
-
                 $preferredPatterns = @(
                   '(?i)tempdb',
                   '(?i)data1|ldata1|datadisk0',
@@ -340,6 +387,10 @@ stages:
                   --query "name" -o tsv 2>$null
 
                 if (-not $vnetExists) {
+                  if (-not [string]::IsNullOrWhiteSpace($vnetNameOverride)) {
+                    throw "Specified VNet '$vnetName' was not found."
+                  }
+
                   Write-Host "Creating VNet: $vnetName"
                   az network vnet create `
                     --resource-group $rg `
@@ -352,6 +403,26 @@ stages:
                 }
                 else {
                   Write-Host "VNet already exists: $vnetName"
+
+                  $subnetExists = az network vnet subnet show `
+                    --resource-group $rg `
+                    --vnet-name $vnetName `
+                    --name $subnetName `
+                    --query "name" -o tsv 2>$null
+
+                  if (-not $subnetExists) {
+                    if (-not [string]::IsNullOrWhiteSpace($vnetNameOverride)) {
+                      throw "Specified subnet '$subnetName' was not found in VNet '$vnetName'."
+                    }
+
+                    Write-Host "Creating subnet: $subnetName"
+                    az network vnet subnet create `
+                      --resource-group $rg `
+                      --vnet-name $vnetName `
+                      --name $subnetName `
+                      --address-prefixes $subnetPrefix `
+                      --only-show-errors | Out-Null
+                  }
                 }
 
                 $nsgExists = az network nsg show `
@@ -631,6 +702,8 @@ stages:
                 Write-Host "==== VM SUMMARY ===="
                 Write-Host "VM name       : $vmName"
                 Write-Host "Resource group: $rg"
+                Write-Host "VNet          : $vnetName"
+                Write-Host "Subnet        : $subnetName"
                 Write-Host "OS disk       : $($osDisk.DiskName)"
                 Write-Host "Data disks    : $($orderedDataDisks.DiskName -join ', ')"
                 Write-Host "NIC           : $nicName"
