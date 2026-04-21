@@ -304,12 +304,12 @@ stages:
                 --only-show-errors | Out-Null
             }
 
-            $account             = "$(targetStorageAccount)"
-            $container           = "$(targetContainer)"
-            $rg                  = "$(targetResourceGroup)"
-            $location            = "$(location)"
-            $hyperVGeneration    = "${{ parameters.hyperVGeneration }}"
-            $resourceTagsInput   = "${{ parameters.resourceTags }}".Trim()
+            $account           = "$(targetStorageAccount)"
+            $container         = "$(targetContainer)"
+            $rg                = "$(targetResourceGroup)"
+            $location          = "$(location)"
+            $hyperVGeneration  = "${{ parameters.hyperVGeneration }}"
+            $resourceTagsInput = "${{ parameters.resourceTags }}".Trim()
 
             $baseTagArgs = Get-TagArgs -ResourceTagsInput $resourceTagsInput
             Write-Host "Resolved disk tags: $($baseTagArgs -join ', ')"
@@ -438,10 +438,8 @@ stages:
                   --only-show-errors | Out-Null
 
                 $osDiskTagArgs = @($baseTagArgs)
-                if ($osDiskTagArgs.Count -gt 0) {
-                  $osDiskTagArgs += "DiskRole=os"
-                  $osDiskTagArgs += "SourceBlob=$($item.BlobName)"
-                }
+                $osDiskTagArgs += "DiskRole=os"
+                $osDiskTagArgs += "SourceBlob=$($item.BlobName)"
 
                 Apply-TagsToDisk `
                   -ResourceGroup $rg `
@@ -466,10 +464,8 @@ stages:
                   --only-show-errors | Out-Null
 
                 $dataDiskTagArgs = @($baseTagArgs)
-                if ($dataDiskTagArgs.Count -gt 0) {
-                  $dataDiskTagArgs += "DiskRole=data"
-                  $dataDiskTagArgs += "SourceBlob=$($item.BlobName)"
-                }
+                $dataDiskTagArgs += "DiskRole=data"
+                $dataDiskTagArgs += "SourceBlob=$($item.BlobName)"
 
                 Apply-TagsToDisk `
                   -ResourceGroup $rg `
@@ -726,12 +722,12 @@ stages:
                       --only-show-errors | Out-Null
                   }
 
-                  $account             = "$(targetStorageAccount)"
-                  $container           = "$(targetContainer)"
-                  $rg                  = "$(targetResourceGroup)"
-                  $location            = "$(location)"
-                  $hyperVGeneration    = "${{ parameters.hyperVGeneration }}"
-                  $resourceTagsInput   = "${{ parameters.resourceTags }}".Trim()
+                  $account           = "$(targetStorageAccount)"
+                  $container         = "$(targetContainer)"
+                  $rg                = "$(targetResourceGroup)"
+                  $location          = "$(location)"
+                  $hyperVGeneration  = "${{ parameters.hyperVGeneration }}"
+                  $resourceTagsInput = "${{ parameters.resourceTags }}".Trim()
 
                   $baseTagArgs = Get-TagArgs -ResourceTagsInput $resourceTagsInput
                   Write-Host "Resolved disk tags: $($baseTagArgs -join ', ')"
@@ -818,10 +814,8 @@ stages:
                         --only-show-errors | Out-Null
 
                       $osDiskTagArgs = @($baseTagArgs)
-                      if ($osDiskTagArgs.Count -gt 0) {
-                        $osDiskTagArgs += "DiskRole=os"
-                        $osDiskTagArgs += "SourceBlob=$($item.BlobName)"
-                      }
+                      $osDiskTagArgs += "DiskRole=os"
+                      $osDiskTagArgs += "SourceBlob=$($item.BlobName)"
 
                       Apply-TagsToDisk `
                         -ResourceGroup $rg `
@@ -846,10 +840,8 @@ stages:
                         --only-show-errors | Out-Null
 
                       $dataDiskTagArgs = @($baseTagArgs)
-                      if ($dataDiskTagArgs.Count -gt 0) {
-                        $dataDiskTagArgs += "DiskRole=data"
-                        $dataDiskTagArgs += "SourceBlob=$($item.BlobName)"
-                      }
+                      $dataDiskTagArgs += "DiskRole=data"
+                      $dataDiskTagArgs += "SourceBlob=$($item.BlobName)"
 
                       Apply-TagsToDisk `
                         -ResourceGroup $rg `
