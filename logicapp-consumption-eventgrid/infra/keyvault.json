@@ -2,9 +2,12 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "keyVaultName": { "type": "string" },
-    "location": { "type": "string" },
-    "deploymentPrincipalObjectId": { "type": "string" }
+    "keyVaultName": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    }
   },
   "resources": [
     {
@@ -13,7 +16,7 @@
       "name": "[parameters('keyVaultName')]",
       "location": "[parameters('location')]",
       "properties": {
-        "enableRbacAuthorization": false,
+        "enableRbacAuthorization": true,
         "tenantId": "[subscription().tenantId]",
         "sku": {
           "name": "standard",
@@ -21,16 +24,7 @@
         },
         "enabledForDeployment": true,
         "enabledForTemplateDeployment": true,
-        "enabledForDiskEncryption": false,
-        "accessPolicies": [
-          {
-            "tenantId": "[subscription().tenantId]",
-            "objectId": "[parameters('deploymentPrincipalObjectId')]",
-            "permissions": {
-              "secrets": [ "get", "list", "set" ]
-            }
-          }
-        ]
+        "enabledForDiskEncryption": false
       }
     }
   ]
