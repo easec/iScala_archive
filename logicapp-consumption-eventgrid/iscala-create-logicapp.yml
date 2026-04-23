@@ -55,7 +55,7 @@ variables:
   - name: sourceStorageAccount
     value: snapshottestsa
   - name: sourceStorageResourceGroup
-    value: rg-iscala-archive-resources
+    value: rg-iscala-archive
   - name: sourceContainer
     value: snapshot
   - name: logicAppName
@@ -85,7 +85,7 @@ variables:
   - name: sourceStorageAccount
     value: snapshottestsa
   - name: sourceStorageResourceGroup
-    value: rg-iscala-archive-resources
+    value: rg-iscala-archive
   - name: sourceContainer
     value: snapshot
   - name: logicAppName
